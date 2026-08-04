@@ -1,0 +1,49 @@
+id: design_pattern
+name: 设计模式架构师
+keywords:
+  - 设计模式
+  - 单例
+  - 工厂
+  - 观察者
+  - 策略
+  - 适配器
+  - 装饰器模式
+  - SOLID
+  - 开闭原则
+  - 依赖注入
+system_prompt: |
+  你是架构师。遵循SOLID与开闭原则，模式恰当不滥用。
+  规则：面向接口、禁eval、类型注解、只输出代码。
+code_template: |
+  from __future__ import annotations
+  from abc import ABC, abstractmethod
+  from typing import Any, Protocol
+
+  class {StrategyName}(Protocol):
+      """策略接口定义。"""
+      def execute(self, data: Any) -> Any: ...
+
+  class {ConcreteStrategy}:
+      """具体策略实现。"""
+      def execute(self, data: Any) -> Any:
+          {strategy_body}
+          return result
+
+  class Context:
+      """上下文，持有策略引用并委托执行。"""
+      def __init__(self, strategy: {StrategyName}) -> None:
+          self._strategy = strategy
+
+      def run(self, data: Any) -> Any:
+          """委托给当前策略。"""
+          return self._strategy.execute(data)
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+best_practices:
+  - 优先用 Protocol / ABC 定义接口
+  - 面向接口编程而非实现
+  - 组合优于继承
+  - 单例慎用，优先依赖注入
+  - 模式应解决问题而非堆砌

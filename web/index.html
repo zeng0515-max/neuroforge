@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NeuroForge · 多智能体代码生成系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+  }
+}
+</script>
+<link rel="stylesheet" href="css/style.css?v=20260803">
+<script>
+window.__errors = [];
+window.addEventListener('error', function(e) {
+  window.__errors.push({type:'error', msg: e.message, src: e.filename, line: e.lineno, col: e.colno, stack: e.error && e.error.stack});
+});
+window.addEventListener('unhandledrejection', function(e) {
+  window.__errors.push({type:'rejection', msg: String(e.reason), stack: e.reason && e.reason.stack});
+});
+</script>
+</head>
+<body>
+
+<div class="bg-layers" id="bg-layers">
+  <div id="three-container"></div>
+  <div class="bg-vignette"></div>
+  <div class="bg-noise"></div>
+</div>
+
+<!-- ============ Landing Page (全屏 3D 入口覆盖层) ============ -->
+<div id="load-curtain" aria-hidden="true">
+  <div class="curtain-loader">
+    <div class="curtain-ring"></div>
+    <div class="curtain-text">NEUROFORGE · INITIALIZING</div>
+    <div class="curtain-sub">正在建立量子场渲染管线…</div>
+  </div>
+</div>
+<div id="landing">
+  <div id="landing-text">
+    <div id="landing-eyebrow">// AUTONOMOUS INTELLIGENCE ENGINE</div>
+    <div id="landing-eyebrow-2" aria-hidden="false">
+      <span>MULTI</span>
+      <span class="sym" data-syms="⇄,⇝,↯,⇌,⇢,∿">⇄</span>
+      <span>AGENT</span>
+      <span class="sym" data-syms="⇝,↯,⇌,⇢,∿,⇄">⇝</span>
+      <span>CODE</span>
+      <span class="sym" data-syms="↯,⇌,⇢,∿,⇄,⇝">↯</span>
+      <span>SYSTEM</span>
+    </div>
+    <h1 id="landing-title">NeuroForge</h1>
+    <p id="landing-subtitle">Multi-Agent Code Forge — 自主多智能体代码生成系统</p>
+    <div id="landing-hint">点击任意位置进入系统</div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- ===================== 顶部 ===================== -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24"><path d="M12 2L3 7v10l9 5 9-5V7L12 2z M12 22V12 M3 7l9 5 9-5"/></svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">NEUROFORGE</div>
+        <div class="brand-sub">MULTI-AGENT CODE FORGE</div>
+      </div>
+    </div>
+
+    <div class="pipeline" id="pipeline">
+      <div class="pipe-node pending" data-agent="requirement">
+        <span class="dot"></span>
+        <div class="node-info">
+          <span class="label">需求分析</span>
+          <span class="sub">Requirement</span>
+        </div>
+      </div>
+      <div class="pipe-conn" id="pc-1"></div>
+      <div class="pipe-node pending" data-agent="code_gen">
+        <span class="dot"></span>
+        <div class="node-info">
+          <span class="label">代码生成</span>
+          <span class="sub">CodeGen</span>
+        </div>
+      </div>
+      <div class="pipe-conn" id="pc-2"></div>
+      <div class="pipe-node pending" data-agent="review">
+        <span class="dot"></span>
+        <div class="node-info">
+          <span class="label">智能审查</span>
+          <span class="sub">Review</span>
+        </div>
+      </div>
+      <div class="pipe-conn" id="pc-3"></div>
+      <div class="pipe-node pending" data-agent="test_gen">
+        <span class="dot"></span>
+        <div class="node-info">
+          <span class="label">测试生成</span>
+          <span class="sub">TestGen</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <div class="status-chip">
+        <span class="led"></span>
+        <span id="status-text">ONLINE · qwen3.7-max</span>
+      </div>
+      <div class="model-wrap">
+        <span class="model-label">模型</span>
+        <select id="model-select" title="选择运行模型"></select>
+        <button id="model-save" type="button">切换</button>
+      </div>
+      <div class="model-wrap">
+        <span class="model-label">技能</span>
+        <select id="skill-select" title="选择专业技能（不选则自动匹配）">
+          <option value="">自动匹配</option>
+        </select>
+      </div>
+      <button id="config-btn" class="accent-btn config-btn" type="button" title="配置 API 大模型">⚙ 配置</button>
+    </div>
+  </header>
+
+  <!-- ===================== 主体 ===================== -->
+  <main class="main">
+    <!-- 左栏 -->
+    <section class="col" id="col-left">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="badge"></span>
+            快捷操作
+          </div>
+        </div>
+        <div class="panel-body" style="padding: 14px 18px;">
+          <div style="display:flex; flex-direction:column; gap: 10px;">
+            <button id="new-btn" class="accent-btn primary" type="button">＋ 新建任务</button>
+            <button id="clear-btn" class="accent-btn danger" type="button">清空历史</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="badge"></span>
+            任务历史
+            <span class="count" id="hist-count">0</span>
+          </div>
+          <div class="panel-actions">
+            <button class="icon-btn" title="刷新" onclick="loadHistory()">↻</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="history-timeline" id="history"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 中栏：控制台 -->
+    <section class="col" id="col-center">
+      <div class="panel" style="flex:1;">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="badge"></span>
+            控制台
+            <span class="count" id="phase-tag">IDLE</span>
+          </div>
+          <div class="panel-actions">
+            <span style="font-family:var(--font-mono); font-size:10.5px; color:var(--text-dim); padding:0 10px;">
+              Tokens:<b id="m-tokens" style="color:var(--pulse); margin:0 4px;">0</b>
+              重试:<b id="m-retry" style="color:var(--pulse); margin:0 4px;">0</b>
+            </span>
+          </div>
+        </div>
+
+        <div class="messages" id="messages">
+          <div class="hero-empty" id="hero-empty">
+            <div class="hero-title">NEUROFORGE</div>
+            <div class="hero-sub">需求分析 · 代码生成 · AST + LLM 双层校验 · 测试生成</div>
+            <div class="hero-cap">
+              <span><span class="pulse-dot"></span>五智能体协同工作流</span>
+              <span><span class="pulse-dot" style="background:var(--accent); box-shadow:0 0 8px var(--accent);"></span>实时可视化监控</span>
+              <span><span class="pulse-dot" style="background:var(--success); box-shadow:0 0 8px var(--success);"></span>反馈驱动自修复</span>
+            </div>
+            <div class="examples">
+              <button class="ex-card" type="button" data-q="实现一个快速排序算法，包含性能优化与边界校验">
+                <div class="ex-tag">SORT · 01</div>
+                <div class="ex-title">快速排序算法</div>
+                <div class="ex-desc">Hoare分区 + 三数取中 + 输入校验</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个JWT身份验证装饰器，支持过期校验和权限检查">
+                <div class="ex-tag">AUTH · 02</div>
+                <div class="ex-title">JWT 鉴权装饰器</div>
+                <div class="ex-desc">HS256 签名 + 过期 + 权限角色</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个异步任务队列，支持优先级、重试和死信队列">
+                <div class="ex-tag">QUEUE · 03</div>
+                <div class="ex-title">优先级任务队列</div>
+                <div class="ex-desc">重试策略 + 死信 + 异步消费</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个线程安全的数据库连接池，含最小最大连接数管理">
+                <div class="ex-tag">POOL · 04</div>
+                <div class="ex-title">数据库连接池</div>
+                <div class="ex-desc">线程安全 + 保活 + 连接复用</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个LRU缓存，支持过期时间与线程安全">
+                <div class="ex-tag">CACHE · 05</div>
+                <div class="ex-title">LRU 缓存</div>
+                <div class="ex-desc">双向链表 + 哈希 + TTL</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个令牌桶限流算法，支持分布式原子操作">
+                <div class="ex-tag">RATE · 06</div>
+                <div class="ex-title">令牌桶限流器</div>
+                <div class="ex-desc">原子补令牌 + 可配置速率</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个线程安全的哈希表，支持动态扩容和渐进式rehash">
+                <div class="ex-tag">HASH · 07</div>
+                <div class="ex-title">可扩缩哈希表</div>
+                <div class="ex-desc">渐进式 rehash + 线程安全</div>
+              </button>
+              <button class="ex-card" type="button" data-q="实现一个WebSocket服务器，支持房间、广播和心跳保活">
+                <div class="ex-tag">WS · 08</div>
+                <div class="ex-title">WebSocket 服务端</div>
+                <div class="ex-desc">房间广播 + 心跳 + 连接管理</div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-wrap">
+          <div class="input-card">
+            <textarea id="input" placeholder="把你的代码需求交给 NeuroForge...（支持自然语言描述，Shift+Enter 换行，Enter 提交）"></textarea>
+            <button class="send-btn" id="send-btn" type="button" title="提交任务 (Enter)">
+              <svg viewBox="0 0 24 24"><path d="M5 12l14-7-7 14-2-6-5-1z"/></svg>
+            </button>
+          </div>
+          <div class="input-tips">
+            <span>建议描述越具体生成越精准</span>
+            <span><kbd>Enter</kbd> 提交 &nbsp;·&nbsp; <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右栏 -->
+    <aside class="col" id="col-right">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="badge"></span>
+            实时监控
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="monitor-grid">
+            <div class="mcard">
+              <div class="m-label">Total</div>
+              <div class="m-val" id="stat-total">0</div>
+              <div class="m-sub">任务数</div>
+            </div>
+            <div class="mcard">
+              <div class="m-label">Pass</div>
+              <div class="m-val success" id="stat-pass">0</div>
+              <div class="m-sub">通过</div>
+            </div>
+            <div class="mcard">
+              <div class="m-label">Fail</div>
+              <div class="m-val fail" id="stat-fail">0</div>
+              <div class="m-sub">失败</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="badge"></span>
+            智能体状态
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="agent-list">
+            <div class="agent-row" data-ag="req">
+              <div class="a-ico">R</div>
+              <div class="a-info">
+                <div class="a-name">Requirement</div>
+                <div class="a-sub">需求结构化 · RAG 增强</div>
+              </div>
+              <div class="a-state idle" data-as="req">IDLE</div>
+            </div>
+            <div class="agent-row" data-ag="gen">
+              <div class="a-ico" style="background: linear-gradient(135deg, rgba(217,70,239,0.32), rgba(232,121,249,0.18));">G</div>
+              <div class="a-info">
+                <div class="a-name">CodeGen</div>
+                <div class="a-sub">多文件生成 · 自检断言</div>
+              </div>
+              <div class="a-state idle" data-as="gen">IDLE</div>
+            </div>
+            <div class="agent-row" data-ag="rev">
+              <div class="a-ico" style="background: linear-gradient(135deg, rgba(246,196,69,0.32), rgba(251,191,36,0.18));">V</div>
+              <div class="a-info">
+                <div class="a-name">Review</div>
+                <div class="a-sub">AST 静态 + LLM 语义</div>
+              </div>
+              <div class="a-state idle" data-as="rev">IDLE</div>
+            </div>
+            <div class="agent-row" data-ag="tes">
+              <div class="a-ico" style="background: linear-gradient(135deg, rgba(6,182,212,0.32), rgba(217,70,239,0.18));">T</div>
+              <div class="a-info">
+                <div class="a-name">TestGen</div>
+                <div class="a-sub">用例生成 + pytest 执行</div>
+              </div>
+              <div class="a-state idle" data-as="tes">IDLE</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <span class="badge"></span>
+            终端日志
+          </div>
+          <div class="panel-actions">
+            <button class="icon-btn danger" title="清空日志" onclick="document.getElementById('terminal').innerHTML=''">×</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="terminal" id="terminal"></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ===================== API 配置弹窗 ===================== -->
+  <div id="config-modal" class="config-modal" aria-hidden="true">
+    <div class="config-modal-backdrop" data-close="config"></div>
+    <div class="config-modal-card">
+      <div class="config-modal-head">
+        <div class="modal-title">配置 API 大模型</div>
+        <button class="icon-btn" data-close="config" title="关闭">×</button>
+      </div>
+      <div class="config-modal-body">
+        <div class="config-status" id="config-status">
+          <span class="led"></span><span id="config-status-text">检测中…</span>
+        </div>
+
+        <label class="cfg-label">选择厂商</label>
+        <select id="cfg-provider" class="cfg-input">
+          <option value="">自定义（手动填写）</option>
+        </select>
+        <div class="cfg-provider-link" id="cfg-provider-link" style="display:none;">
+          <a href="#" id="cfg-provider-url" target="_blank" rel="noopener">前往厂商获取 API Key →</a>
+        </div>
+
+        <label class="cfg-label">Base URL</label>
+        <input id="cfg-base-url" class="cfg-input" type="text" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+
+        <label class="cfg-label">API Key</label>
+        <input id="cfg-api-key" class="cfg-input" type="password" placeholder="sk-..." autocomplete="off" />
+        <div class="cfg-hint" id="cfg-key-hint">获取后填入，保存即生效，无需重启服务</div>
+
+        <label class="cfg-label">主模型</label>
+        <input id="cfg-model" class="cfg-input" type="text" placeholder="qwen3.7-max" />
+
+        <label class="cfg-label">代码模型（可选，留空与主模型一致）</label>
+        <input id="cfg-code-model" class="cfg-input" type="text" placeholder="留空则使用主模型" />
+      </div>
+      <div class="config-modal-foot">
+        <button id="cfg-save" class="accent-btn primary" type="button">保存并生效</button>
+        <button class="accent-btn" data-close="config" type="button">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 底部 ===================== -->
+  <footer class="bottombar">
+    <div class="left">
+      <span>v0.2.0 · NEUROMORPHIC COSMOLOGY</span>
+      <span class="sep">|</span>
+      <span>Powered by LangGraph + FastAPI</span>
+    </div>
+    <div class="right">
+      <span class="sys"><span class="led"></span>SYSTEM ONLINE</span>
+      <span class="sep">|</span>
+      <span id="now-tm">--:--:--</span>
+    </div>
+  </footer>
+</div>
+
+<!-- 关键修复：遮罩移除 + Landing 切换独立于 3D 渲染，防止脚本加载顺序导致黑屏 -->
+<script>
+(function initCurtain() {
+  var t0 = Date.now();
+  var curtain, landing, app;
+
+  function initEls() {
+    curtain = document.getElementById('load-curtain');
+    landing = document.getElementById('landing');
+    app = document.querySelector('.app');
+  }
+
+  function reveal() {
+    initEls();
+    if (curtain && !curtain.classList.contains('reveal')) {
+      curtain.classList.add('reveal');
+    }
+  }
+
+  function enterApp() {
+    initEls();
+    // 先确保 curtain 已移除
+    if (curtain && !curtain.classList.contains('reveal')) {
+      curtain.classList.add('reveal');
+    }
+    // 再隐藏 landing 并显示 app
+    if (landing && !landing.classList.contains('hidden')) {
+      landing.classList.add('hidden');
+      if (app) {
+        setTimeout(function() {
+          app.classList.add('visible');
+        }, 400);
+      }
+    }
+  }
+
+  // 绑定 Landing 点击（主入口）
+  function bindLanding() {
+    initEls();
+    if (landing && !landing.__bound) {
+      landing.addEventListener('click', enterApp);
+      landing.__bound = true;
+    }
+  }
+
+  // 多种触发方式，确保不会卡死
+  // 1. Landing 区域点击
+  function tryBindLanding() {
+    initEls();
+    if (landing) {
+      bindLanding();
+    } else {
+      setTimeout(tryBindLanding, 50);
+    }
+  }
+  tryBindLanding();
+
+  // 2. 全局点击兜底（防止 landing 绑定失效）
+  document.addEventListener('click', function onFirstClick(e) {
+    // 如果点击在 landing 内，enterApp 会由 landing 的监听器处理
+    // 如果 landing 监听器没绑上，这里兜底
+    initEls();
+    if (landing && !landing.classList.contains('hidden') && e.target === landing) {
+      enterApp();
+    }
+  });
+
+  // 3. 键盘触发
+  document.addEventListener('keydown', function onFirstKey() {
+    initEls();
+    if (landing && !landing.classList.contains('hidden')) {
+      enterApp();
+    }
+  }, { once: true });
+
+  // 4. 定时自动进入（3.5s 兜底）
+  setTimeout(function() {
+    initEls();
+    if (landing && !landing.classList.contains('hidden')) {
+      enterApp();
+    }
+  }, 3500);
+
+  // 5. 失败回退：3.5s 后强制移除 curtain（不依赖 transition）
+  setTimeout(function() {
+    initEls();
+    if (curtain && !curtain.classList.contains('reveal')) {
+      curtain.style.transition = 'none';
+      curtain.style.transform = 'translateY(-100%)';
+      curtain.style.opacity = '0';
+      curtain.style.visibility = 'hidden';
+    }
+  }, 3500);
+
+  // 暴露给 UI 脚本
+  window.__enterApp = enterApp;
+  window.__revealCurtain = reveal;
+})();
+</script>
+
+<script src="js/config.js?v=1"></script>
+<script type="module" src="js/main.js?v=5"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+id: api_design
+name: 后端API架构师
+keywords:
+  - REST
+  - API
+  - endpoint
+  - FastAPI
+  - Flask
+  - 路由
+  - 接口
+  - HTTP
+  - 中间件
+  - OpenAPI
+system_prompt: |
+  你是后端架构师。RESTful规范，输入校验，统一错误响应。
+  规则：用Pydantic校验、异常捕获、禁eval、只输出代码。
+code_template: |
+  from fastapi import APIRouter, HTTPException
+  from pydantic import BaseModel
+
+  router = APIRouter()
+
+  class {ModelName}Request(BaseModel):
+      """请求体模型。"""
+      {request_fields}
+
+  class {ModelName}Response(BaseModel):
+      """响应体模型。"""
+      {response_fields}
+
+  @router.post("/{resource}", response_model={ModelName}Response)
+  async def {handler_name}(req: {ModelName}Request) -> {ModelName}Response:
+      """处理请求并校验输入。"""
+      try:
+          {handler_body}
+      except ValueError as e:
+          raise HTTPException(status_code=400, detail=str(e))
+      return {ModelName}Response({response_args})
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+  - check_no_subprocess
+best_practices:
+  - RESTful 动词语义: GET/POST/PUT/DELETE
+  - Pydantic 模型做输入校验
+  - 统一错误响应结构与状态码
+  - 版本化路由 /api/v1
+  - 关键路径加超时与限流

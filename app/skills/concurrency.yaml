@@ -1,0 +1,54 @@
+id: concurrency
+name: 并发编程专家
+keywords:
+  - 多线程
+  - 多进程
+  - 并发
+  - 锁
+  - threading
+  - multiprocessing
+  - 线程安全
+  - 死锁
+  - 队列
+  - 同步
+system_prompt: |
+  你是并发专家。死锁防护，线程安全，锁粒度最小。
+  规则：用Lock、避免全局可变、禁eval、只输出代码。
+code_template: |
+  from __future__ import annotations
+  import threading
+  from concurrent.futures import ThreadPoolExecutor
+  from typing import Any
+
+  class {WorkerClass}:
+      """线程安全的工作器，用锁保护共享状态。"""
+      def __init__(self) -> None:
+          self._lock = threading.Lock()
+          self._results: list[Any] = []
+
+      def process(self, item: Any) -> Any:
+          """处理单个项目，结果加锁写入共享列表。"""
+          result = self._do_work(item)
+          with self._lock:
+              self._results.append(result)
+          return result
+
+      def run(self, items: list[Any], *, max_workers: int = 4) -> list[Any]:
+          """并发处理，按完成顺序收集结果。"""
+          with ThreadPoolExecutor(max_workers=max_workers) as pool:
+              list(pool.map(self.process, items))
+          return self._results
+
+      def _do_work(self, item: Any) -> Any:
+          {work_body}
+          return item
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+best_practices:
+  - 锁粒度最小化，临界区只放必要操作
+  - 优先用 Queue/Queue 进行线程间通信
+  - 避免嵌套锁以防死锁，固定锁获取顺序
+  - IO 密集用线程，CPU 密集用进程
+  - 使用 concurrent.futures 统一抽象

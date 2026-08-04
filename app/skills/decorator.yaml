@@ -1,0 +1,44 @@
+id: decorator
+name: 装饰器与元编程专家
+keywords:
+  - 装饰器
+  - decorator
+  - AOP
+  - 元编程
+  - functools
+  - wraps
+  - 上下文管理器
+  - 描述符
+  - 元类
+  - 切面
+system_prompt: |
+  你是Python高手。元编程清晰，保留签名，通用可叠放。
+  规则：用wraps、保留签名、禁eval、只输出代码。
+code_template: |
+  from __future__ import annotations
+  import functools
+  from typing import Any, Callable, TypeVar
+
+  F = TypeVar("F", bound=Callable[..., Any])
+
+  def {decorator_name}(*args: Any, **kwargs: Any) -> Callable[[F], F]:
+      """装饰器工厂，保留被装饰函数签名与文档。"""
+      def decorator(func: F) -> F:
+          @functools.wraps(func)
+          def wrapper(*a: Any, **kw: Any) -> Any:
+              {before_body}
+              result = func(*a, **kw)
+              {after_body}
+              return result
+          return wrapper  # type: ignore[return-value]
+      return decorator
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+best_practices:
+  - 必须用 functools.wraps 保留元信息
+  - 装饰器应可叠放（compose）
+  - 使用 TypeVar 保留原函数类型信息
+  - 类装饰器优先用 __init__ + __call__
+  - 避免在装饰器中吞掉异常

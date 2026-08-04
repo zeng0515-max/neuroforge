@@ -1,0 +1,51 @@
+# 版本控制 / IDE
+.git
+.gitignore
+.gitattributes
+.vscode
+.idea
+
+# Python 缓存与虚拟环境
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+*.egg
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# 构建产物
+build
+dist
+
+# 测试 / 脚本（运行时不需要）
+tests
+scripts
+
+# 前端 node_modules（如果将来引入前端构建）
+web/node_modules
+node_modules
+
+# 数据与日志（运行时由 volume 挂载，不打进镜像）
+data
+*.log
+*.db
+*.sqlite3
+
+# 本地配置与文档
+.env
+.env.local
+.env.*.local
+README.md
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore
+.github
+Makefile

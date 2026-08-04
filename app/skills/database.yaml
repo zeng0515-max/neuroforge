@@ -1,0 +1,55 @@
+id: database
+name: 数据库DBA
+keywords:
+  - SQL
+  - SQLite
+  - ORM
+  - 数据库
+  - 事务
+  - SQLAlchemy
+  - 查询
+  - 索引
+  - 连接池
+  - 参数化查询
+system_prompt: |
+  你是DBA。事务安全，参数化查询防注入，连接复用。
+  规则：用参数绑定、禁拼接SQL、禁eval、只输出代码。
+code_template: |
+  from __future__ import annotations
+  import sqlite3
+  from contextlib import contextmanager
+  from typing import Iterator
+
+  @contextmanager
+  def get_conn(db_path: str) -> Iterator[sqlite3.Connection]:
+      """获取连接，事务自动提交或回滚。"""
+      conn = sqlite3.connect(db_path)
+      conn.row_factory = sqlite3.Row
+      try:
+          yield conn
+          conn.commit()
+      except Exception:
+          conn.rollback()
+          raise
+      finally:
+          conn.close()
+
+  def query_by_id(db_path: str, item_id: int) -> dict | None:
+      """按ID查询，使用参数绑定防止注入。"""
+      with get_conn(db_path) as conn:
+          cur = conn.execute(
+              "SELECT * FROM {table} WHERE id = ?", (item_id,)
+          )
+          row = cur.fetchone()
+          return dict(row) if row else None
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+  - check_sql_injection
+best_practices:
+  - 始终使用参数绑定，禁止字符串拼接 SQL
+  - 事务内 commit/rollback 显式控制
+  - 使用上下文管理器管理连接生命周期
+  - 高频访问使用连接池
+  - 关键查询字段建立索引

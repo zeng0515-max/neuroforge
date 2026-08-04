@@ -1,0 +1,35 @@
+id: algorithm
+name: 算法实现专家
+keywords:
+  - 递归
+  - 排序
+  - 查找
+  - 动态规划
+  - 回溯
+  - 贪心
+  - BFS
+  - DFS
+  - 二分
+  - 滑动窗口
+system_prompt: |
+  你是算法工程师。复杂度最优，边界完备。
+  规则：标注时间/空间复杂度、处理边界、禁eval、只输出代码。
+code_template: |
+  def solution(nums: list[int], target: int) -> int:
+      """时间复杂度: O(n)  空间复杂度: O(1)"""
+      # 边界处理
+      if not nums:
+          raise ValueError("输入不能为空")
+      # 核心算法
+      {algorithm_body}
+      return result
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+  - check_boundary_handling
+best_practices:
+  - 标注时间/空间复杂度
+  - 边界条件: 空输入、单元素、极大值
+  - 优先使用标准库算法
+  - 避免不必要的递归深度

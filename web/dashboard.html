@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NeuroForge — 多智能体协同 Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #252540;
+    --text: #e0e0f0;
+    --text2: #8888aa;
+    --accent: #7c5cfc;
+    --accent2: #5ce0d4;
+    --success: #44d9a0;
+    --warning: #f0a050;
+    --danger: #e0556a;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 280px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sidebar-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    font-size: 20px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-sub {
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 4px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .task-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .task-item {
+    padding: 12px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    margin-bottom: 6px;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+
+  .task-item:hover { background: var(--surface2); }
+  .task-item.active { background: var(--surface2); border-color: var(--accent); }
+
+  .task-item .title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .task-item .meta {
+    font-size: 11px;
+    color: var(--text2);
+    display: flex;
+    gap: 12px;
+  }
+
+  .status-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .status-dot.running { background: var(--accent); animation: pulse 1.5s infinite; }
+  .status-dot.done { background: var(--success); }
+  .status-dot.failed { background: var(--danger); }
+  .status-dot.pending { background: var(--text2); }
+  .status-dot.hitl { background: var(--warning); animation: pulse 1.5s infinite; }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .sidebar-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text2);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Main */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .main-header {
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .main-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .btn {
+    padding: 8px 20px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font);
+  }
+
+  .btn:hover { border-color: var(--accent); background: #1e1e30; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #6e50f0; }
+
+  .content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Graph panel */
+  .graph-panel {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    background: radial-gradient(ellipse at center, #12121a 0%, var(--bg) 70%);
+    overflow: hidden;
+  }
+
+  .graph-panel canvas { display: block; }
+
+  .no-task-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text2);
+    pointer-events: none;
+  }
+
+  .no-task-overlay .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+  .no-task-overlay .msg { font-size: 14px; }
+
+  /* Right panel */
+  .right-panel {
+    width: 420px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .panel-tab {
+    flex: 1;
+    padding: 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    font-weight: 500;
+  }
+
+  .panel-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panel-tab:hover { color: var(--text); }
+
+  .panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  /* Logs */
+  .log-entry {
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    border-left: 3px solid var(--border);
+    background: var(--surface2);
+  }
+
+  .log-entry.node-start { border-left-color: var(--accent); }
+  .log-entry.node-done { border-left-color: var(--success); }
+  .log-entry.node-error { border-left-color: var(--danger); }
+  .log-entry.hitl { border-left-color: var(--warning); }
+
+  .log-time { color: var(--text2); font-size: 10px; }
+
+  /* Metrics */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .metric-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .metric-card .label { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+  .metric-card .value { font-size: 20px; font-weight: 700; }
+
+  /* Code output */
+  .code-output {
+    background: #0d0d16;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    color: var(--accent2);
+  }
+
+  /* Prompt input */
+  .prompt-area {
+    padding: 16px 32px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .prompt-input {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font);
+    resize: none;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .prompt-input:focus { border-color: var(--accent); }
+  .prompt-input::placeholder { color: var(--text2); }
+
+  /* Approval bar */
+  .approval-bar {
+    padding: 12px 24px;
+    background: #1a1208;
+    border-top: 1px solid var(--warning);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    display: none;
+  }
+
+  .approval-bar.visible { display: flex; }
+
+  .approval-bar .msg {
+    flex: 1;
+    font-size: 13px;
+    color: var(--warning);
+  }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-header">
+    <div class="logo">NeuroForge</div>
+    <div class="logo-sub">Multi-Agent Code System</div>
+  </div>
+  <div class="task-list" id="taskList">
+    <div style="padding:24px;text-align:center;color:var(--text2);font-size:13px;">
+      提交一个需求<br>开始多智能体协作
+    </div>
+  </div>
+  <div class="sidebar-footer">
+    <span id="wsStatus">未连接</span>
+    <span>v2.0</span>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="main-header">
+    <h2 id="headerTitle">Pipeline Dashboard</h2>
+    <span style="font-size:12px;color:var(--text2)" id="taskIdDisplay"></span>
+    <button class="btn" onclick="toggleAutoScroll()" id="autoScrollBtn">Auto Scroll: ON</button>
+  </div>
+
+  <div class="content">
+    <!-- Graph Panel -->
+    <div class="graph-panel" id="graphPanel">
+      <canvas id="graphCanvas"></canvas>
+      <div class="no-task-overlay" id="noTaskOverlay">
+        <div class="icon">&#9678;</div>
+        <div class="msg">等待新任务...</div>
+      </div>
+    </div>
+
+    <!-- Right Panel -->
+    <div class="right-panel">
+      <div class="panel-tabs">
+        <div class="panel-tab active" onclick="switchTab('logs')">Agent 日志</div>
+        <div class="panel-tab" onclick="switchTab('code')">生成代码</div>
+        <div class="panel-tab" onclick="switchTab('metrics')">指标</div>
+        <div class="panel-tab" onclick="switchTab('review')">评审</div>
+      </div>
+      <div class="panel-content" id="panelContent">
+        <div style="color:var(--text2);font-size:13px;text-align:center;padding:40px 0;">
+          提交需求后，这里会显示<br>每个 Agent 的实时执行日志
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approval Bar -->
+  <div class="approval-bar" id="approvalBar">
+    <span class="status-dot hitl"></span>
+    <span class="msg" id="approvalMsg">人工审批: 生成的代码需要审查确认</span>
+    <button class="btn primary" onclick="approveHITL(true)">批准</button>
+    <button class="btn" style="border-color:var(--danger);color:var(--danger)" onclick="approveHITL(false)">拒绝</button>
+  </div>
+
+  <!-- Prompt Input -->
+  <div class="prompt-area">
+    <textarea class="prompt-input" id="promptInput" rows="2"
+      placeholder="输入需求描述... 例如：用 Python 实现一个 LRU Cache，支持 get/put 操作，O(1) 复杂度"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();submitTask()}"></textarea>
+    <button class="btn primary" onclick="submitTask()" id="submitBtn">运行 Pipeline</button>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// State
+// ============================================================================
+const API_BASE = '/api/v1';
+const WS_BASE = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${API_BASE}`;
+
+let state = {
+  currentTaskId: null,
+  ws: null,
+  wsConnected: false,
+  autoScroll: true,
+  activeTab: 'logs',
+  tasks: [],
+  currentNode: null,
+  events: [],
+  generatedCode: '',
+  reviewResult: '',
+  metrics: {},
+  hitlTaskId: null,
+};
+
+// ============================================================================
+// Graph Canvas — animated pipeline visualization
+// ============================================================================
+const canvas = document.getElementById('graphCanvas');
+const ctx = canvas.getContext('2d');
+
+const NODES = [
+  { id: 'requirement', label: '需求分析', x: 0.5, y: 0.12, color: '#7c5cfc', icon: 'R' },
+  { id: 'code_gen', label: '代码生成', x: 0.5, y: 0.33, color: '#5ce0d4', icon: 'C' },
+  { id: 'review', label: '代码评审', x: 0.5, y: 0.54, color: '#f0a050', icon: 'V' },
+  { id: 'test_gen', label: '测试生成', x: 0.5, y: 0.75, color: '#44d9a0', icon: 'T' },
+  { id: 'done', label: '交付', x: 0.5, y: 0.92, color: '#8888aa', icon: 'D' },
+];
+
+let particles = [];
+let activeNodeIdx = -1;
+let animFrame;
+
+function initCanvas() {
+  canvas.width = canvas.parentElement.clientWidth;
+  canvas.height = canvas.parentElement.clientHeight;
+  window.addEventListener('resize', () => {
+    canvas.width = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight;
+  });
+  for (let i = 0; i < 50; i++) {
+    particles.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.5 + 0.5,
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: (Math.random() - 0.5) * 0.3,
+    });
+  }
+  animate();
+}
+
+function animate() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const cx = canvas.width / 2;
+
+  // Particles
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+    if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(124,92,252,0.15)';
+    ctx.fill();
+  });
+
+  // Edges between nodes
+  for (let i = 0; i < NODES.length - 1; i++) {
+    const a = NODES[i], b = NODES[i + 1];
+    const y1 = a.y * canvas.height, y2 = b.y * canvas.height;
+    const active = i === activeNodeIdx;
+
+    // Data flow particles on edges
+    if (active) {
+      for (let j = 0; j < 3; j++) {
+        const t = ((Date.now() / 800 + j * 0.33) % 1);
+        const y = y1 + (y2 - y1) * t;
+        ctx.beginPath();
+        ctx.arc(cx, y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = a.color;
+        ctx.fill();
+      }
+    }
+
+    // Edge line
+    ctx.beginPath();
+    ctx.moveTo(cx, y1 + 28);
+    ctx.lineTo(cx, y2 - 28);
+    ctx.strokeStyle = active ? `${a.color}44` : '#252540';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.setLineDash(active ? [] : [4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Nodes
+  NODES.forEach((n, idx) => {
+    const x = cx, y = n.y * canvas.height;
+    const isActive = idx === activeNodeIdx;
+    const isDone = idx < activeNodeIdx;
+    const r = isActive ? 30 : 26;
+
+    // Glow
+    if (isActive) {
+      ctx.beginPath();
+      ctx.arc(x, y, r + 8, 0, Math.PI * 2);
+      ctx.fillStyle = `${n.color}15`;
+      ctx.fill();
+    }
+
+    // Circle
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = isActive ? n.color : isDone ? `${n.color}44` : '#1a1a26';
+    ctx.strokeStyle = isActive ? n.color : isDone ? `${n.color}88` : '#252540';
+    ctx.lineWidth = isActive ? 2 : 1;
+    ctx.fill();
+    ctx.stroke();
+
+    // Icon
+    ctx.fillStyle = isActive ? '#fff' : isDone ? n.color : '#3a3a55';
+    ctx.font = '12px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(n.icon, x, y);
+
+    // Label
+    ctx.fillStyle = isActive ? n.color : isDone ? `${n.color}aa` : '#3a3a55';
+    ctx.font = `${isActive ? '12px' : '11px'} Inter, sans-serif`;
+    ctx.fillText(n.label, x, y + r + 16);
+  });
+
+  animFrame = requestAnimationFrame(animate);
+}
+
+initCanvas();
+
+// ============================================================================
+// WebSocket
+// ============================================================================
+function connectWS(taskId) {
+  if (state.ws) { state.ws.close(); state.ws = null; }
+
+  const url = `${WS_BASE}/ws/pipeline/${taskId}`;
+  state.ws = new WebSocket(url);
+
+  state.ws.onopen = () => {
+    state.wsConnected = true;
+    document.getElementById('wsStatus').innerHTML =
+      '<span class="status-dot running"></span>已连接';
+    state.ws.send(JSON.stringify({ type: 'subscribe' }));
+  };
+
+  state.ws.onclose = () => {
+    state.wsConnected = false;
+    document.getElementById('wsStatus').innerHTML =
+      '<span class="status-dot pending"></span>未连接';
+  };
+
+  state.ws.onerror = () => {
+    document.getElementById('wsStatus').innerHTML =
+      '<span class="status-dot failed"></span>连接错误';
+  };
+
+  state.ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.type === 'ping') return;
+    handleEvent(msg);
+  };
+}
+
+function handleEvent(msg) {
+  if (msg.type !== 'event') return;
+  state.events.push(msg);
+
+  const stage = msg.stage;
+  const data = msg.data || {};
+
+  // Update active node
+  const nodeMap = {
+    'node_running': { node: data.node_name, idx: NODES.findIndex(n =>
+      data.node_name?.toLowerCase().includes(n.id)) },
+    'node_completed': null, // keep current, move on next
+    'node_failed': { node: data.node_name || 'review', idx: NODES.findIndex(n => n.id === 'review') },
+    'pipeline_done': { idx: NODES.length - 1 },
+    'pipeline_failed': { idx: -1 },
+    'hitl_waiting': { idx: NODES.findIndex(n => n.id === 'review') },
+  };
+
+  const update = nodeMap[stage];
+  if (update !== undefined) {
+    if (update !== null) {
+      activeNodeIdx = update.idx;
+      if (update.node) state.currentNode = update.node;
+    }
+  }
+
+  // Collect outputs
+  if (data.requirement_summary) {
+    // Store requirement result
+  }
+  if (data.generated_code) {
+    state.generatedCode = data.generated_code;
+  }
+  if (data.review_summary || data.verdict) {
+    state.reviewResult = JSON.stringify({
+      verdict: data.verdict,
+      summary: data.review_summary,
+      score: data.score,
+    }, null, 2);
+  }
+  if (data.test_code) {
+    state.generatedCode += '\n\n# --- Generated Tests ---\n' + data.test_code;
+  }
+
+  // HITL
+  if (stage === 'hitl_waiting') {
+    state.hitlTaskId = msg.task_id;
+    document.getElementById('approvalBar').classList.add('visible');
+    document.getElementById('approvalMsg').textContent =
+      `人工审批: ${data.reason || '生成的代码需要审查确认'}`;
+  }
+  if (stage === 'hitl_resolved') {
+    document.getElementById('approvalBar').classList.remove('visible');
+  }
+
+  // Update task status
+  if (stage === 'pipeline_done') {
+    updateTaskStatus(msg.task_id, 'done');
+    document.getElementById('noTaskOverlay').style.display = 'none';
+  }
+  if (stage === 'pipeline_failed') {
+    updateTaskStatus(msg.task_id, 'failed');
+    document.getElementById('noTaskOverlay').style.display = 'none';
+  }
+
+  // Refresh panel
+  refreshPanel();
+}
+
+function updateTaskStatus(taskId, status) {
+  const items = document.querySelectorAll('.task-item');
+  items.forEach(el => {
+    if (el.dataset.taskId === taskId) {
+      const dot = el.querySelector('.status-dot');
+      dot.className = `status-dot ${status}`;
+      const meta = el.querySelector('.meta');
+      if (meta) meta.textContent += ` | ${status === 'done' ? '已完成' : '失败'}`;
+    }
+  });
+}
+
+// ============================================================================
+// Submit Task
+// ============================================================================
+async function submitTask() {
+  const input = document.getElementById('promptInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '提交中...';
+
+  try {
+    const resp = await fetch(`${API_BASE}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_request: text, skill_id: 'general' }),
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.detail || '请求失败');
+
+    const taskId = result.task_id || result.id;
+    state.currentTaskId = taskId;
+    state.events = [];
+    state.generatedCode = '';
+    state.reviewResult = '';
+    state.metrics = {};
+    activeNodeIdx = 0;
+
+    document.getElementById('taskIdDisplay').textContent = `Task: ${taskId}`;
+    document.getElementById('headerTitle').textContent = 'Pipeline 执行中...';
+    document.getElementById('noTaskOverlay').style.display = 'none';
+
+    // Add to sidebar
+    addTaskToList(taskId, text);
+
+    // Connect WS
+    connectWS(taskId);
+
+    input.value = '';
+    switchTab('logs');
+  } catch (err) {
+    alert('提交失败: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '运行 Pipeline';
+  }
+}
+
+function addTaskToList(taskId, prompt) {
+  const list = document.getElementById('taskList');
+  // Clear placeholder
+  if (list.querySelector('div[style]') && list.children.length === 1) {
+    list.innerHTML = '';
+  }
+  const el = document.createElement('div');
+  el.className = 'task-item active';
+  el.dataset.taskId = taskId;
+  el.innerHTML = `
+    <div class="title">${prompt.substring(0, 40)}${prompt.length > 40 ? '...' : ''}</div>
+    <div class="meta"><span class="status-dot running"></span>执行中</div>
+  `;
+  el.onclick = () => switchTask(taskId);
+  list.prepend(el);
+}
+
+function switchTask(taskId) {
+  document.querySelectorAll('.task-item').forEach(e => e.classList.remove('active'));
+  const el = document.querySelector(`[data-task-id="${taskId}"]`);
+  if (el) el.classList.add('active');
+  state.currentTaskId = taskId;
+  document.getElementById('taskIdDisplay').textContent = `Task: ${taskId}`;
+  connectWS(taskId);
+}
+
+// ============================================================================
+// HITL Approval
+// ============================================================================
+async function approveHITL(approved) {
+  if (!state.hitlTaskId) return;
+  try {
+    const resp = await fetch(`${API_BASE}/tasks/${state.hitlTaskId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved, reason: approved ? '人工批准' : '人工拒绝' }),
+    });
+    const result = await resp.json();
+    document.getElementById('approvalBar').classList.remove('visible');
+    state.hitlTaskId = null;
+    if (!resp.ok) alert('审批失败: ' + (result.detail || ''));
+  } catch (err) {
+    alert('审批失败: ' + err.message);
+  }
+}
+
+// ============================================================================
+// Panel Tabs
+// ============================================================================
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+  const tabs = document.querySelectorAll('.panel-tab');
+  const idx = { logs: 0, code: 1, metrics: 2, review: 3 }[tab];
+  if (idx < tabs.length) tabs[idx].classList.add('active');
+  refreshPanel();
+}
+
+function refreshPanel() {
+  const container = document.getElementById('panelContent');
+
+  if (state.activeTab === 'logs') {
+    if (state.events.length === 0) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:13px;text-align:center;padding:40px 0;">等待事件...</div>';
+      return;
+    }
+    container.innerHTML = state.events.slice().reverse().map((e, i) => {
+      const cls = {
+        node_running: 'node-start',
+        node_completed: 'node-done',
+        node_failed: 'node-error',
+        hitl_waiting: 'hitl',
+      }[e.stage] || '';
+      const icon = {
+        node_running: '▶',
+        node_completed: '✓',
+        node_failed: '✗',
+        hitl_waiting: '⏸',
+        pipeline_done: '✓',
+        pipeline_failed: '✗',
+      }[e.stage] || '·';
+      const label = e.data?.node_name || e.stage || 'event';
+      return `<div class="log-entry ${cls}">
+        <span class="log-time">${icon}</span> ${label}
+        ${e.data?.error ? '<div style="color:var(--danger);margin-top:4px">' + e.data.error + '</div>' : ''}
+        ${e.data?.verdict ? '<div style="color:var(--warning);margin-top:4px">评审: ' + e.data.verdict + '</div>' : ''}
+      </div>`;
+    }).join('');
+
+    if (state.autoScroll) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+
+  if (state.activeTab === 'code') {
+    if (!state.generatedCode) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:13px;text-align:center;padding:40px 0;">代码将在生成阶段显示</div>';
+    } else {
+      container.innerHTML = `<div class="code-output">${escapeHtml(state.generatedCode)}</div>`;
+    }
+  }
+
+  if (state.activeTab === 'metrics') {
+    container.innerHTML = `
+      <div class="metric-grid">
+        <div class="metric-card"><div class="label">执行阶段</div><div class="value" style="color:var(--accent)">${activeNodeIdx + 1}/${NODES.length}</div></div>
+        <div class="metric-card"><div class="label">事件数</div><div class="value" style="color:var(--accent2)">${state.events.length}</div></div>
+        <div class="metric-card"><div class="label">WS 连接</div><div class="value">${state.wsConnected ? '在线' : '离线'}</div></div>
+        <div class="metric-card"><div class="label">当前状态</div><div class="value" style="font-size:13px;color:${activeNodeIdx >= 0 ? 'var(--accent)' : 'var(--text2)'}">${activeNodeIdx >= 0 ? NODES[Math.min(activeNodeIdx, NODES.length - 1)].label : '空闲'}</div></div>
+      </div>
+
+      <div style="margin-top:16px;padding:12px;background:var(--surface2);border-radius:10px;font-size:12px;color:var(--text2)">
+        <div style="font-weight:600;color:var(--text);margin-bottom:8px">Pipeline 架构</div>
+        <div style="line-height:1.8">
+          Supervisor 星型编排<br>
+          需求分析 → 代码生成 → 双层评审<br>
+          └ 不通过回退重做 ┘<br>
+          → 测试生成 → 交付
+        </div>
+      </div>
+    `;
+  }
+
+  if (state.activeTab === 'review') {
+    if (!state.reviewResult) {
+      container.innerHTML = '<div style="color:var(--text2);font-size:13px;text-align:center;padding:40px 0;">评审结果将在评审阶段显示</div>';
+    } else {
+      container.innerHTML = `<div class="code-output">${escapeHtml(state.reviewResult)}</div>`;
+    }
+  }
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+function toggleAutoScroll() {
+  state.autoScroll = !state.autoScroll;
+  document.getElementById('autoScrollBtn').textContent =
+    `Auto Scroll: ${state.autoScroll ? 'ON' : 'OFF'}`;
+}
+
+// ============================================================================
+// Init — load existing tasks
+// ============================================================================
+(async function init() {
+  try {
+    const resp = await fetch(`${API_BASE}/tasks?limit=10`);
+    if (resp.ok) {
+      const data = await resp.json();
+      const tasks = data.tasks || data || [];
+      if (tasks.length > 0) {
+        const list = document.getElementById('taskList');
+        list.innerHTML = '';
+        tasks.forEach(t => {
+          const el = document.createElement('div');
+          el.className = 'task-item';
+          el.dataset.taskId = t.id || t.task_id;
+          const status = t.status || 'pending';
+          el.innerHTML = `
+            <div class="title">${(t.user_request || t.title || 'Unknown').substring(0, 40)}</div>
+            <div class="meta"><span class="status-dot ${status}"></span>${status}</div>
+          `;
+          el.onclick = () => switchTask(t.id || t.task_id);
+          list.appendChild(el);
+        });
+      }
+    }
+  } catch (e) {
+    // Offline mode
+  }
+})();
+</script>
+</body>
+</html>

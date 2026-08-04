@@ -1,0 +1,116 @@
+# NeuroForge Docker Compose — Production-Ready Multi-Agent Code System
+#
+# Usage:
+#   1. Copy .env.example to .env and configure your LLM credentials
+#   2. docker compose up -d
+#   3. Open http://localhost:8001 for the 3D landing page
+#   4. Open http://localhost:8001/web/dashboard.html for the pipeline dashboard
+#
+# For Docker sandbox mode (isolated code execution):
+#   Set SANDBOX_MODE=docker in .env
+#   The host Docker socket is mounted for container-in-container execution
+
+version: "3.9"
+
+services:
+  neuroforge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: neuroforge:latest
+    container_name: neuroforge
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8001}:${APP_PORT:-8001}"
+    environment:
+      - APP_ENV=${APP_ENV:-prod}
+      - APP_HOST=0.0.0.0
+      - APP_PORT=${APP_PORT:-8001}
+      - APP_DEBUG=${APP_DEBUG:-false}
+      - APP_LOG_LEVEL=${APP_LOG_LEVEL:-INFO}
+
+      # LLM Configuration (OpenAI-compatible)
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4096}
+
+      # Code LLM (falls back to main if not set)
+      - CODE_LLM_BASE_URL=${CODE_LLM_BASE_URL}
+      - CODE_LLM_API_KEY=${CODE_LLM_API_KEY}
+      - CODE_LLM_MODEL=${CODE_LLM_MODEL}
+      - CODE_LLM_TEMPERATURE=${CODE_LLM_TEMPERATURE:-0.2}
+      - CODE_LLM_MAX_TOKENS=${CODE_LLM_MAX_TOKENS:-8192}
+
+      # Database
+      - DB_PATH=/app/data/app.db
+      - DB_ECHO=${DB_ECHO:-false}
+
+      # ChromaDB
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+      - CHROMA_COLLECTION_NAME=${CHROMA_COLLECTION_NAME:-code_knowledge}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1024}
+
+      # API Key auth (leave empty to disable)
+      - API_KEY=${API_KEY}
+
+      # Sandbox execution
+      - SANDBOX_MODE=${SANDBOX_MODE:-local}
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-python:3.11-slim}
+      - SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-30}
+      - SANDBOX_MAX_MEMORY_MB=${SANDBOX_MAX_MEMORY_MB:-512}
+      - SANDBOX_NETWORK=${SANDBOX_NETWORK:-false}
+
+      # Agent configuration
+      - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-3}
+      - AGENT_SKILL_DIR=${AGENT_SKILL_DIR:-app/skills}
+
+      # Tracing
+      - TRACING_ENABLED=${TRACING_ENABLED:-false}
+      - TRACING_SERVICE_NAME=${TRACING_SERVICE_NAME:-neuroforge}
+
+      # Memory
+      - MEMORY_ENABLED=${MEMORY_ENABLED:-true}
+      - MEMORY_COLLECTION=${MEMORY_COLLECTION:-agent_memory}
+
+      # Semantic Cache
+      - SEMANTIC_CACHE_ENABLED=${SEMANTIC_CACHE_ENABLED:-true}
+      - SEMANTIC_CACHE_SIMILARITY_THRESHOLD=${SEMANTIC_CACHE_SIMILARITY_THRESHOLD:-0.95}
+
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-false}
+      - RATE_LIMIT_REQUESTS_PER_MINUTE=${RATE_LIMIT_REQUESTS_PER_MINUTE:-60}
+
+      # Guardrails
+      - GUARDRAIL_ENABLED=${GUARDRAIL_ENABLED:-false}
+
+      # Model routing
+      - MODEL_ROUTING_RULES=${MODEL_ROUTING_RULES:-code_gen:code,review:main,test_gen:code,chat:main}
+      - MODEL_ROUTING_FALLBACK=${MODEL_ROUTING_FALLBACK:-true}
+
+    volumes:
+      # Persistent data (SQLite, ChromaDB, checkpoints)
+      - ./data:/app/data
+      # Mount host Docker socket for sandbox mode
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount skills directory for hot-reload
+      - ./app/skills:/app/app/skills:ro
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:${APP_PORT:-8001}/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 512M
+          cpus: '0.5'

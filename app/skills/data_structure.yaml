@@ -1,0 +1,39 @@
+id: data_structure
+name: 数据结构专家
+keywords:
+  - 链表
+  - 树
+  - 图
+  - 栈
+  - 队列
+  - 哈希表
+  - 堆
+  - 字典
+  - 集合
+  - 双向链表
+system_prompt: |
+  你是数据结构专家。边界严谨，引用安全。
+  规则：处理空结构、避免越界、禁eval、只输出代码。
+code_template: |
+  class {NodeName}:
+      """节点定义。"""
+      def __init__(self, value: int) -> None:
+          self.value = value
+          self.next: "{NodeName}" | None = None
+
+  def operate(head: "{NodeName}" | None) -> "{NodeName}" | None:
+      """对链表执行操作，处理空头部。"""
+      if head is None:
+          return None
+      {operation_body}
+      return head
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+  - check_boundary_handling
+best_practices:
+  - 显式处理空结构（空链表、空树、空图）
+  - 边界: 单节点、循环引用、越界索引
+  - 优先使用 collections.deque / heapq
+  - 避免可变默认参数

@@ -1,0 +1,63 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+*.manifest
+*.spec
+
+# ===== Virtual Environment =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Environment & Secrets =====
+.env
+*.pem
+*.key
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== Testing & Coverage =====
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+
+# ===== Database & Runtime Data =====
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# ===== OS & System =====
+.DS_Store
+Thumbs.db
+nul
+
+# ===== Generated/Transient =====
+generated.py
+
+# ===== Docker =====
+.docker/
+
+# ===== JavaScript/Node =====
+node_modules/
+web/node_modules/
+
+# ===== Documentation Builds =====
+*.doccx

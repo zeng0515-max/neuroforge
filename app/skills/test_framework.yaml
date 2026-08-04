@@ -1,0 +1,45 @@
+id: test_framework
+name: 测试工程师
+keywords:
+  - pytest
+  - unittest
+  - mock
+  - 测试
+  - 单元测试
+  - 覆盖率
+  - fixture
+  - 断言
+  - TDD
+  - 测试隔离
+system_prompt: |
+  你是测试工程师。覆盖完整，mock隔离，断言明确。
+  规则：用fixture、禁eval、命名清晰、只输出代码。
+code_template: |
+  from __future__ import annotations
+  from unittest.mock import MagicMock
+  import pytest
+
+  @pytest.fixture
+  def {fixture_name}() -> {fixture_type}:
+      """构造测试数据/依赖。"""
+      {fixture_body}
+      return instance
+
+  def test_{case_name}({fixture_name}: {fixture_type}) -> None:
+      """验证 {case_name} 的预期行为。"""
+      # Arrange
+      {arrange_body}
+      # Act
+      result = {act_call}
+      # Assert
+      assert result == {expected}, f"期望 {expected}, 实际 {result}"
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+best_practices:
+  - 遵循 Arrange-Act-Assert 三段式
+  - 用 fixture 管理测试依赖与清理
+  - mock 外部依赖保证隔离
+  - 测试函数名描述被测行为
+  - 每个测试只验证一个断言点

@@ -1,0 +1,31 @@
+# ===== Web 框架 =====
+fastapi==0.115.6
+uvicorn==0.34.0
+sse-starlette==3.0.3
+
+# ===== 数据校验 / 配置 =====
+pydantic==2.10.4
+pydantic-settings==2.14.2
+python-dotenv==1.0.1
+
+# ===== 数据库 =====
+SQLAlchemy==2.0.36
+
+# ===== 向量库 =====
+chromadb==0.5.23
+
+# ===== LLM / Agent 编排 =====
+openai==1.109.1
+langchain==0.3.14
+langchain-core==0.3.31
+langchain-openai==0.2.14
+langgraph==0.2.62
+
+# ===== MCP 工具协议（可选，tool_registry 已内置纯 Python 实现） =====
+mcp==1.1.0
+
+# ===== 测试执行（TestGenAgent 隔离执行生成代码） =====
+pytest==8.3.4
+
+# ===== 断点续跑（方案C：LangGraph Checkpointer） =====
+langgraph-checkpoint-sqlite<3.0.0

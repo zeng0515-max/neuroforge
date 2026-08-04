@@ -1,0 +1,46 @@
+id: async_io
+name: 异步编程专家
+keywords:
+  - async
+  - await
+  - 协程
+  - asyncio
+  - 事件循环
+  - 并发
+  - aiohttp
+  - 异步IO
+  - 任务
+  - 超时
+system_prompt: |
+  你是异步专家。事件循环清晰，超时可控，避免阻塞。
+  规则：用async/await、设超时、禁eval、只输出代码。
+code_template: |
+  from __future__ import annotations
+  import asyncio
+  from typing import Any
+
+  async def {coroutine_name}(url: str, *, timeout: float = 30.0) -> Any:
+      """异步执行任务，带超时控制。"""
+      try:
+          async with asyncio.timeout(timeout):
+              {await_body}
+              return result
+      except asyncio.TimeoutError:
+          raise TimeoutError(f"任务超时: {url}")
+      except asyncio.CancelledError:
+          raise
+
+  async def gather_all(urls: list[str]) -> list[Any]:
+      """并发执行多个协程。"""
+      tasks = [{coroutine_name}(u) for u in urls]
+      return await asyncio.gather(*tasks, return_exceptions=False)
+validation_rules:
+  - must_have_docstring
+  - must_have_type_hints
+  - check_no_eval
+best_practices:
+  - 始终为异步操作设置超时
+  - 显式处理 CancelledError 并重新抛出
+  - 避免 async 函数中调用阻塞 IO
+  - 用 asyncio.gather 并发，asyncio.Semaphore 限流
+  - 优先使用 anyio/aiohttp 等异步库
