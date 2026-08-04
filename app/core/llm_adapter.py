@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -616,6 +617,8 @@ class LLMAdapter:
             return response
         except Exception as e:
             logger.exception("LLM 同步调用失败: %s", e)
+            # 检测 403 额度耗尽错误并发送事件
+            self._emit_quota_error(e)
             # fallback：如果当前用的是 code_model 且路由允许 fallback，尝试用 main_model
             if use_code and route["fallback_available"] and not model:
                 logger.warning("code_model 调用失败，尝试 fallback 到 main_model：%s", e)
@@ -688,6 +691,8 @@ class LLMAdapter:
             return response
         except Exception as e:
             logger.exception("LLM 异步调用失败: %s", e)
+            # 检测 403 额度耗尽错误并发送事件
+            self._emit_quota_error(e)
             # fallback：如果当前用的是 code_model 且路由允许 fallback，尝试用 main_model
             if use_code and route["fallback_available"] and not model:
                 logger.warning("code_model 调用失败，尝试 fallback 到 main_model：%s", e)
@@ -841,15 +846,94 @@ class LLMAdapter:
             logger.exception("chat_structured 调用失败：%s", e)
             raise
 
+    def _emit_quota_error(self, exc: Exception) -> None:
+        """检测 403 额度耗尽错误并发送事件到 Dashboard。"""
+        try:
+            is_quota_error = (
+                isinstance(exc, openai.PermissionDeniedError)
+                and ("Free quota exhausted" in str(exc) or "AllocationQuota" in str(exc))
+            )
+            if is_quota_error:
+                logger.error("API Key 免费额度已用尽：%s", exc)
+                try:
+                    from app.core.events import EventBus, EventType
+                    event_bus = EventBus()
+                    event_bus.emit(
+                        EventType.NODE_FAILED,
+                        data={
+                            "node": "llm",
+                            "node_name": "LLM 调用",
+                            "error_type": "quota_exhausted",
+                            "message": "API Key 免费额度已用完，请充值或更换 Key 后重试",
+                            "detail": str(exc)[:300],
+                        },
+                        task_id="",
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _dry_run(self, messages: List[BaseMessage]) -> ChatResponse:
-        preview = " | ".join(
-            f"{type(m).__name__}:{str(m.content)[:40]}"
-            for m in messages[-3:]
-        )
-        content = f"[DryRun] No-Op LLM response. last_msgs={preview}"
+        """DryRun 模式：根据消息内容生成有意义的占位代码/回复。
+
+        当 API Key 未配置或额度用尽时，生成一个可解析的模板，
+        避免 AST 验证失败和 Dashboard 显示异常。
+        """
+        # 提取用户请求内容
+        user_content = ""
+        for m in reversed(messages):
+            if isinstance(m, (HumanMessage, SystemMessage)):
+                content = str(m.content)
+                if content and len(content) > 5:
+                    user_content = content
+                    break
+
+        # 检测是否为代码生成请求
+        code_keywords = ["代码", "实现", "python", "def ", "class ", "函数", "需求",
+                         "FILE", "哈希表", "排序", "算法", "线程", "安全", "web",
+                         "server", "API", "HTTP", "链表", "树", "图", "队列", "栈",
+                         "排序", "二分", "递归", "迭代", "装饰器", "并发", "异步",
+                         "async", "await", "数据库", "缓存", "ORM", "路由", "中间件"]
+        is_code_request = any(kw.lower() in user_content.lower() for kw in code_keywords)
+
+        if is_code_request:
+            # 提取文件路径要求（如果有）
+            file_path = "main.py"
+            path_match = re.search(r"###\s*FILE\s*[:：]\s*([^\s]+)", user_content)
+            if path_match:
+                file_path = path_match.group(1).strip()
+
+            # 生成通用 Python 占位代码（可被 _parse_file_sections 正确解析）
+            safe_summary = user_content[:80].replace("\n", " ").replace("\"", "'")
+            content = f'''### FILE: {file_path}
+"""
+[DryRun] 占位代码 — API Key 未配置或额度已用尽。
+以下为模板代码，请配置有效 API Key 后重新执行以获得真实代码生成。
+"""
+
+# TODO: 实现功能
+# 原始需求: {safe_summary}
+
+
+def placeholder():
+    """占位函数"""
+    print("Hello from NeuroForge DryRun mode!")
+    print("请在 Dashboard 配置有效的 API Key 以获得真实代码生成。")
+
+
+if __name__ == "__main__":
+    placeholder()
+'''
+        else:
+            # 自然语言占位回复
+            safe_summary = user_content[:100] if user_content else "无内容"
+            content = f"[DryRun] 当前处于 DryRun 模式（未配置有效 API Key 或额度已用尽）。\n请访问 Dashboard 配置页面配置 API Key。\n\n原始请求摘要：{safe_summary}"
+
         return ChatResponse(
             content=content,
             model="dry-run",
+            usage=LLMUsage(),
         )
 
     def reset_usage(self) -> None:

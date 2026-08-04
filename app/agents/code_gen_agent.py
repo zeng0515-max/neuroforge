@@ -74,6 +74,11 @@ def _parse_file_sections(raw: str) -> List[Dict[str, str]]:
     if not raw or not raw.strip():
         return files
 
+    # DryRun 检测：如果内容以 [DryRun] 开头且没有 FILE 标记，返回空列表让外层处理
+    stripped = raw.strip()
+    if stripped.startswith("[DryRun]") and "### FILE:" not in stripped:
+        return files
+
     # 先尝试 FILE 分节
     for m in _FILE_SECTION_RE.finditer(raw):
         path = m.group(1).strip().strip('`').strip('"').strip("'")
@@ -402,6 +407,49 @@ class CodeGenAgent:
 
         # 4. 解析 + 校验
         files_raw = _parse_file_sections(resp.content)
+
+        # DryRun 处理：如果 LLM 返回 DryRun 响应且解析为空，生成通用模板
+        if resp.model == "dry-run" and not files_raw:
+            logger.warning("检测到 DryRun 响应，生成占位代码...")
+            files_raw = [{
+                "path": "main.py",
+                "content": '''# [DryRun 占位代码] API Key 未配置或额度已用尽
+# 请配置有效 API Key 后重新执行以获得真实代码生成
+
+"""
+NeuroForge 多智能体协同代码生成系统
+当前处于 DryRun 模式（演示模式）
+"""
+
+
+def main():
+    """程序入口"""
+    print("Hello from NeuroForge DryRun mode!")
+    print("=" * 50)
+    print("提示：当前未配置有效 API Key，代码为占位模板。")
+    print("请在 Dashboard 配置有效的 API Key 以获得真实代码生成。")
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    main()
+'''
+            }]
+            # 发送 DryRun 事件到 Dashboard
+            try:
+                event_bus.emit(
+                    EventType.NODE_FAILED,
+                    data={
+                        "node": "llm_dryrun",
+                        "node_name": "代码生成",
+                        "error_type": "dry_run",
+                        "message": "当前处于 DryRun 模式（API Key 未配置或额度已用尽），已生成占位代码。请配置 API Key 后重试。",
+                        "phase": "code_gen",
+                    },
+                    task_id=task_id,
+                )
+            except Exception:
+                pass
 
         # 空文件检测：如果解析出全是空内容，重试一次（用更简单的格式要求）
         if not files_raw or all(not f.get("content","").strip() for f in files_raw):

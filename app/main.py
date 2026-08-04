@@ -165,13 +165,17 @@ except Exception as e:
 
 
 # 修复 JS 模块 MIME 类型（ES 模块要求 Content-Type: application/javascript 或 text/javascript）
-# 同时禁用 JS 缓存，避免开发阶段浏览器使用旧版本
+# 同时禁用 JS/HTML/CSS 缓存，避免开发阶段浏览器使用旧版本
 @app.middleware("http")
 async def js_mime_middleware(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
     if path.endswith(".js") or path.endswith(".mjs"):
         response.headers["Content-Type"] = "application/javascript; charset=utf-8"
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    elif path.endswith(".html") or path.endswith(".css"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
