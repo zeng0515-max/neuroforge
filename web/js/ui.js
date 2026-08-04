@@ -15,7 +15,7 @@ const enterApp = window.__enterApp || function() {
   if (landing && !landing.classList.contains('hidden')) {
     landing.classList.add('hidden');
     if (app) {
-      setTimeout(() => { app.classList.add('visible'); }, 400);
+      setTimeout(() => { app.classList.add('visible'); }, 100);
     }
   }
 };

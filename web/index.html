@@ -422,13 +422,14 @@ window.addEventListener('unhandledrejection', function(e) {
     if (curtain && !curtain.classList.contains('reveal')) {
       curtain.classList.add('reveal');
     }
-    // 再隐藏 landing 并显示 app
+    // landing 淡出 (0.45s) + app 淡入 (0.15s delay + 0.6s) → 完美交叉淡入淡出
     if (landing && !landing.classList.contains('hidden')) {
       landing.classList.add('hidden');
       if (app) {
+        // 100ms 后启动 app 淡入，让两个动画重叠 ~350ms
         setTimeout(function() {
           app.classList.add('visible');
-        }, 400);
+        }, 100);
       }
     }
   }
