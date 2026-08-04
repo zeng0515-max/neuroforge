@@ -454,15 +454,28 @@ window.addEventListener('unhandledrejection', function(e) {
   }
   tryBindLanding();
 
-  // 2. 全局点击兜底（防止 landing 绑定失效）
+  // 2. 全局点击兜底（点击页面任意位置进入 app，排除交互元素）
   document.addEventListener('click', function onFirstClick(e) {
-    // 如果点击在 landing 内，enterApp 会由 landing 的监听器处理
-    // 如果 landing 监听器没绑上，这里兜底
     initEls();
-    if (landing && !landing.classList.contains('hidden') && e.target === landing) {
-      enterApp();
+    if (!landing || landing.classList.contains('hidden')) return;
+    // 排除配置弹窗、按钮、输入框等交互元素
+    var t = e.target;
+    if (t.closest('#config-modal') || t.closest('.config-modal-card') ||
+        t.closest('button') || t.closest('input') || t.closest('select') ||
+        t.closest('textarea') || t.closest('a')) {
+      return;
     }
+    enterApp();
   });
+
+  // 2b. 触摸设备兜底（touchstart 比 click 更快响应）
+  document.addEventListener('touchstart', function onFirstTouch(e) {
+    initEls();
+    if (!landing || landing.classList.contains('hidden')) return;
+    var t = e.target;
+    if (t.closest('#config-modal') || t.closest('.config-modal-card')) return;
+    enterApp();
+  }, { passive: true, once: true });
 
   // 3. 键盘触发
   document.addEventListener('keydown', function onFirstKey() {

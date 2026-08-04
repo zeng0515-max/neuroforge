@@ -22,6 +22,11 @@
 - ChromaDB ONNX embedding model 需网络下载（79MB），已改为惰性初始化
 - LLM_API_KEY 未配置时自动进入 DryRun 模式
 
+## 仓库信息
+- GitHub: https://github.com/zeng0515-max/neuroforge（Public, MIT License）
+- 首次 commit: 2026-08-04，701 文件，12MB
+- `.env` 和 `data/` 已加入 .gitignore，未提交到仓库
+
 ## 用户上下文
 - 用户是大四软件工程专业学生，秋招冲刺
 - 目标：靠这个项目拿大厂 offer

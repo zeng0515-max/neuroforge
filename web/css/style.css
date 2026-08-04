@@ -135,6 +135,7 @@ body {
   font-weight: 600;
   letter-spacing: -0.018em;
   line-height: 1.02;
+  color: #8ab8c0; /* fallback for browsers without background-clip:text */
   background:
     linear-gradient(180deg,
       rgba(255,255,255,0.22) 0%,

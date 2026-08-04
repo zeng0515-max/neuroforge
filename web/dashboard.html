@@ -856,9 +856,22 @@ function toggleAutoScroll() {
 }
 
 // ============================================================================
-// Init — load existing tasks
+// Init — load existing tasks + check LLM status
 // ============================================================================
 (async function init() {
+  // Check LLM config status first
+  try {
+    const cfgResp = await fetch(`${API_BASE}/config/llm`);
+    if (cfgResp.ok) {
+      const cfg = await cfgResp.json();
+      if (cfg.dry_run) {
+        showDryRunWarning(cfg.model, cfg.base_url);
+      }
+    }
+  } catch (e) {
+    console.warn('LLM config check failed:', e);
+  }
+
   try {
     const resp = await fetch(`${API_BASE}/tasks?limit=10`);
     if (resp.ok) {
@@ -885,6 +898,25 @@ function toggleAutoScroll() {
     // Offline mode
   }
 })();
+
+function showDryRunWarning(model, baseUrl) {
+  const banner = document.createElement('div');
+  banner.id = 'dryrun-banner';
+  banner.innerHTML = `
+    <span>LLM 未配置：当前处于 DryRun 模式，任务会生成占位代码。</span>
+    <a href="#" onclick="document.getElementById('configBtn')?.click();return false;">点击配置 API Key</a>
+  `;
+  banner.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+    background: linear-gradient(90deg, #e0556a, #f0a050);
+    color: #fff; padding: 10px 20px; text-align: center; font-size: 14px;
+    font-family: var(--font); display: flex; justify-content: center; align-items: center; gap: 16px;
+  `;
+  banner.querySelector('a').style.cssText = 'color: #fff; text-decoration: underline; font-weight: 600;';
+  document.body.appendChild(banner);
+  // Push content down
+  document.body.style.paddingTop = '40px';
+}
 </script>
 </body>
 </html>
