@@ -1,0 +1,7 @@
+# Binary assets should not be merged or normalized as text.
+*.wasm binary
+*.mp4 binary
+*.webm binary
+*.png binary
+*.jpg binary
+*.jpeg binary

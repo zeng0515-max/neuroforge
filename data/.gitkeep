@@ -1,0 +1,6 @@
+# NeuroForge 数据持久化目录
+# 此文件用于保证 data 目录在 Git 仓库中存在
+# SQLite 数据库、ChromaDB 向量库、checkpoint 等运行时数据均存放在此目录
+#
+# 注意：data/ 下的所有实际数据文件均已在 .gitignore 中排除
+# 如需持久化数据，请使用 docker volumes 或外部存储

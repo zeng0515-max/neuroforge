@@ -39,6 +39,8 @@ class ReviewSeverity(str, Enum):
 class TestStatus(str, Enum):
     """测试报告状态。"""
 
+    __test__ = False  # 防止 pytest 把业务枚举误当作测试类收集
+
     NOT_RUN = "not_run"
     GENERATED = "generated"
     PASSED = "passed"

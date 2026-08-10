@@ -152,12 +152,16 @@ class FallbackSpanContext:
 class TracingManager:
     """追踪管理器：OTel 优先，自研降级"""
 
-    def __init__(self, service_name: str = "multi-agent-code-system"):
+    def __init__(
+        self,
+        service_name: str = "multi-agent-code-system",
+        enabled: bool = False,
+    ):
         self._service_name = service_name
-        self._enabled = False
+        self._enabled = enabled
         self._tracer = None
 
-        if _OTEL_AVAILABLE:
+        if enabled and _OTEL_AVAILABLE:
             try:
                 provider = TracerProvider(
                     resource=Resource.create({"service.name": service_name})
@@ -229,6 +233,7 @@ def setup_tracing(
 ):
     """初始化 tracing（在 app lifespan 中调用）"""
     global tracer
+    tracer = TracingManager(service_name=service_name, enabled=enabled)
     if not enabled:
         return
     # 先注入日志 filter，再创建 TracingManager，确保后续 OTel 初始化
@@ -241,7 +246,6 @@ def setup_tracing(
     root_logger.addFilter(log_filter)
     for handler in root_logger.handlers:
         handler.addFilter(log_filter)
-    tracer = TracingManager(service_name=service_name)
 
 
 def trace_span(name: str, **attrs):

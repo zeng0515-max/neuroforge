@@ -10,13 +10,13 @@
       name: '阿里云 DashScope',
       base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       key_url: 'https://bailian.console.aliyun.com/?apiKey=1#/api-key',
-      models: ['qwen3.7-max', 'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-coder-plus'],
+      models: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-coder-plus', 'qwen3-max', 'qwen3-coder-plus'],
     },
     DEEPSEEK_API_KEY: {
       name: 'DeepSeek',
       base_url: 'https://api.deepseek.com/v1',
       key_url: 'https://platform.deepseek.com/api_keys',
-      models: ['deepseek-v3', 'deepseek-r1'],
+      models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'],
     },
     ARK_API_KEY: {
       name: '火山方舟（豆包）',
@@ -28,7 +28,13 @@
       name: 'OpenAI',
       base_url: 'https://api.openai.com/v1',
       key_url: 'https://platform.openai.com/api-keys',
-      models: ['gpt-4o-mini', 'gpt-4o'],
+      models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o4-mini'],
+    },
+    GEMINI_API_KEY: {
+      name: 'Google Gemini',
+      base_url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      key_url: 'https://aistudio.google.com/app/apikey',
+      models: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
     },
   };
 
@@ -46,6 +52,7 @@
   const saveBtn = document.getElementById('cfg-save');
 
   let lastStatus = null;
+  let lastProviders = [];
 
   function openModal() {
     modal.classList.add('open');
@@ -87,12 +94,12 @@
   // 选择厂商自动填充 Base URL / 模型 / Key 链接
   providerSel.addEventListener('change', () => {
     const envKey = providerSel.value;
-    const info = PROVIDER_MAP[envKey];
+    const info = lastProviders.find((p) => p.env_key === envKey) || PROVIDER_MAP[envKey];
     if (!info) {
       providerLinkWrap.style.display = 'none';
       return;
     }
-    if (baseUrlInput.value !== info.base_url) baseUrlInput.value = info.base_url;
+    if (info.base_url && baseUrlInput.value !== info.base_url) baseUrlInput.value = info.base_url;
     if (!modelInput.value || info.models.includes(modelInput.value)) {
       modelInput.value = info.models[0] || '';
     }
@@ -106,12 +113,19 @@
       const r = await fetch('/api/v1/config/llm', { cache: 'no-cache' });
       const data = await r.json();
       lastStatus = data;
+      lastProviders = data.providers || [];
       populateProviders(data.providers || []);
 
       statusEl.classList.toggle('ok', data.configured);
-      statusText.textContent = data.configured
-        ? `已配置 · ${data.model}（${data.dry_run ? 'DryRun 待验证' : '生效中'}）`
-        : '未配置 API Key，当前为 DryRun 模式（不会真正调用模型）';
+      if (data.quota_exhausted) {
+        statusEl.classList.add('quota');
+        statusText.textContent = `⚠ 额度已用尽 · ${data.model}（请更换 Key）`;
+      } else {
+        statusEl.classList.remove('quota');
+        statusText.textContent = data.configured
+          ? `已配置 · ${data.model}（${data.dry_run ? 'DryRun 待验证' : '生效中'}）`
+          : '未配置 API Key，当前为 DryRun 模式（不会真正调用模型）';
+      }
 
       if (data.base_url) baseUrlInput.value = data.base_url;
       if (data.model) modelInput.value = data.model;
@@ -157,7 +171,12 @@
         return;
       }
       statusEl.classList.toggle('ok', !data.dry_run);
+      statusEl.classList.remove('quota');
       statusText.textContent = data.message;
+
+      // 隐藏配额警告横幅
+      const banner = document.getElementById('quota-warning');
+      if (banner) banner.hidden = true;
 
       // 同步顶部状态与模型列表
       const statusChip = document.getElementById('status-text');

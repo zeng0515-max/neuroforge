@@ -6,7 +6,8 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 import httpx
 import openai
@@ -32,7 +33,7 @@ except ImportError:  # pragma: no cover
     ChatOpenAI = None  # type: ignore
 
 from app.core.config import settings
-from app.core.llm_providers import _resolve_provider
+from app.core.llm_providers import _PROVIDER_REGISTRY, _resolve_provider
 
 try:
     from app.core.observability import metrics_collector, alert_manager
@@ -94,8 +95,6 @@ def _build_llm(
 ) -> ChatOpenAI:
     if ChatOpenAI is None:
         raise ImportError("langchain-openai is not installed")
-    # httpx.Timeout 设置 connect/read 超时防止无限挂起
-    # connect=15s: DNS+TCP+SSL 握手 / read=90s: 首字节响应 / write=15s: 请求体发送
     _llm_timeout = httpx.Timeout(connect=15.0, read=90.0, write=15.0, pool=10.0)
     return ChatOpenAI(
         base_url=base_url,
@@ -105,8 +104,6 @@ def _build_llm(
         max_tokens=max_tokens,
         timeout=_llm_timeout,
         max_retries=1,
-        # DashScope qwen3 系列默认开启 thinking，长任务会长时间无响应
-        # 关闭 thinking 以获得确定性、低延迟的输出
         extra_body={"enable_thinking": False},
     )
 
@@ -124,11 +121,10 @@ class MultiModelRouter:
     """
 
     def __init__(self) -> None:
-        self._rules: Dict[str, bool] = {}  # task_type -> use_code_model
+        self._rules: Dict[str, bool] = {}
         self._parse_rules()
 
     def _parse_rules(self) -> None:
-        """解析路由规则字符串。"""
         rules_str = settings.model_routing.rules
         for rule in rules_str.split(","):
             rule = rule.strip()
@@ -142,15 +138,6 @@ class MultiModelRouter:
             self._rules[task_type] = model_role == "code"
 
     def resolve(self, task_type: str, fallback_model: Optional[str] = None) -> Dict[str, Any]:
-        """根据任务类型解析模型选择。
-
-        Args:
-            task_type: 任务类型（code_gen / review / test_gen / chat）
-            fallback_model: 可选，指定备用模型名
-
-        Returns:
-            {"use_code_model": bool, "model": Optional[str]}
-        """
         use_code_model = self._rules.get(task_type, False)
         result: Dict[str, Any] = {
             "use_code_model": use_code_model,
@@ -160,7 +147,6 @@ class MultiModelRouter:
         return result
 
     def get_route_info(self) -> Dict[str, str]:
-        """返回当前路由规则信息（用于展示）。"""
         return {task: "code" if use_code else "main" for task, use_code in self._rules.items()}
 
 
@@ -181,6 +167,66 @@ def _record_llm_metrics(
         )
 
 
+class _TokenAccumulator:
+    """将流式 token 累积为完整的 chunk（句子/段落/代码块）。
+
+    缓冲 token 直到检测到 chunk 边界（句末标点、代码块闭合、或达到最大长度），
+    然后产出完整 chunk 并可选回调。
+    """
+
+    _SENTENCE_END = re.compile(r'[。！？.!?。！？]\s*$')
+
+    def __init__(self, callback: Optional[Callable[[str], None]] = None) -> None:
+        self._buffer: List[str] = []
+        self._callback = callback
+
+    def push(self, token: str) -> Optional[str]:
+        """推入一个 token；若检测到 chunk 边界则返回完整 chunk，否则返回 None。"""
+        self._buffer.append(token)
+        text = "".join(self._buffer)
+        if self._is_chunk_complete(text):
+            chunk = text
+            self._buffer.clear()
+            if self._callback:
+                try:
+                    self._callback(chunk)
+                except Exception:
+                    pass
+            return chunk
+        return None
+
+    def flush(self) -> Optional[str]:
+        """将剩余缓冲作为最终 chunk 输出。"""
+        if self._buffer:
+            chunk = "".join(self._buffer)
+            self._buffer.clear()
+            if self._callback:
+                try:
+                    self._callback(chunk)
+                except Exception:
+                    pass
+            return chunk
+        return None
+
+    def reset(self) -> None:
+        """清空缓冲但不产出。"""
+        self._buffer.clear()
+
+    @classmethod
+    def _is_chunk_complete(cls, text: str) -> bool:
+        if text.startswith('```'):
+            if text.count('```') >= 2 and len(text) > 10:
+                return True
+            if len(text) >= 512:
+                return True
+            return False
+        if cls._SENTENCE_END.search(text):
+            return True
+        if len(text) >= 256:
+            return True
+        return False
+
+
 class LLMAdapter:
     """
     模型调用抽象层（核心亮点）：
@@ -198,7 +244,9 @@ class LLMAdapter:
         self._code: Optional[ChatOpenAI] = None
         self.dry_run: bool = False
         self.init_error: str = ""
-        # 当前主模型 / 代码模型名称（运行时可切换）
+        self.quota_exhausted: bool = False
+        self.quota_detail: str = ""
+        self._quota_state_file = Path(__file__).resolve().parent.parent / "runtime" / ".quota_state.json"
         self._current_main_model: str = settings.llm.model
         self._current_code_model: str = (
             settings.code_llm.model or settings.llm.model
@@ -206,10 +254,39 @@ class LLMAdapter:
         self._router = MultiModelRouter()
         self._cache = None
         self._init_cache()
+        self._restore_quota_state()
         self._build_clients()
 
+    def _save_quota_state(self) -> None:
+        try:
+            self._quota_state_file.parent.mkdir(parents=True, exist_ok=True)
+            self._quota_state_file.write_text(json.dumps({
+                "quota_exhausted": self.quota_exhausted,
+                "quota_detail": self.quota_detail,
+                "saved_at": time.time(),
+            }))
+        except Exception:
+            pass
+
+    def _restore_quota_state(self) -> None:
+        try:
+            if self._quota_state_file.exists():
+                data = json.loads(self._quota_state_file.read_text())
+                self.quota_exhausted = data.get("quota_exhausted", False)
+                self.quota_detail = data.get("quota_detail", "")
+        except Exception:
+            pass
+
+    def _clear_quota_state(self) -> None:
+        self.quota_exhausted = False
+        self.quota_detail = ""
+        try:
+            if self._quota_state_file.exists():
+                self._quota_state_file.unlink()
+        except Exception:
+            pass
+
     def _init_cache(self) -> None:
-        """初始化语义缓存。"""
         try:
             from app.core.semantic_cache import semantic_cache
             self._cache = semantic_cache
@@ -237,6 +314,7 @@ class LLMAdapter:
         if not self._is_real_key(settings.llm.api_key):
             self.dry_run = True
             logger.warning("LLM_API_KEY 为空或占位符，进入 DryRun 模式，不会真正调用模型。")
+            self._restore_quota_state()
             return
         try:
             self._main = _build_llm(
@@ -258,29 +336,26 @@ class LLMAdapter:
             self._code_base_url = settings.code_llm.base_url or settings.llm.base_url
             self._code_api_key = settings.code_llm.api_key or settings.llm.api_key
             self.dry_run = False
+            self._restore_quota_state()
         except Exception as e:
             logger.error("初始化 LLM 客户端失败：%s", e)
             self._main = None
             self._code = None
             self.dry_run = True
             self.init_error = f"{type(e).__name__}: {e}"
+            self._restore_quota_state()
 
     # ------------------------------------------------------------------ #
     #  模型管理：列表 / 切换
     # ------------------------------------------------------------------ #
     def reload_config(self) -> None:
-        """热重载：重新读取 settings 并重建 LLM 客户端（页面内配置 API 后无需重启）。
-
-        调用前需先更新 settings.llm / settings.code_llm 及 os.environ，
-        此处仅重建客户端并同步 dry_run 状态。
-        """
         self._current_main_model = settings.llm.model
         self._current_code_model = settings.code_llm.model or settings.llm.model
         self._build_clients()
+        self._clear_quota_state()
 
     @property
     def current_model(self) -> str:
-        """当前主模型名称（前端展示用）。"""
         return self._current_main_model
 
     @property
@@ -293,23 +368,14 @@ class LLMAdapter:
 
     @staticmethod
     def available_models() -> List[str]:
-        """预设模型清单（基于 OpenAI 兼容协议常用模型 + 当前默认）。"""
-        return [
-            "qwen3.7-max",
-            "qwen-max",
-            "qwen-plus",
-            "qwen-turbo",
-            "qwen-coder-plus",
-            "deepseek-v3",
-            "deepseek-r1",
-            "doubao-seed-1-6-flash-250828",
-            "doubao-seed-1-6-250615",
-            "gpt-4o-mini",
-            "gpt-4o",
-        ]
+        """Registered models plus whatever is currently configured."""
+        models = set(_PROVIDER_REGISTRY.keys())
+        for configured in (settings.llm.model, settings.code_llm.model or settings.llm.model):
+            if configured:
+                models.add(configured)
+        return sorted(models)
 
     def switch_model(self, model: str, *, for_code: bool = False) -> Dict[str, str]:
-        """运行时切换模型，不重启服务。"""
         if not model or not model.strip():
             raise ValueError("模型名称不能为空")
         model = model.strip()
@@ -387,11 +453,6 @@ class LLMAdapter:
         use_code_model: bool,
         model: Optional[str],
     ):
-        """根据 use_code_model 与 model 参数解析出实际使用的 client。
-
-        当 model 参数非空且非 DryRun 时，构建一个临时 client 用本任务指定模型，
-        避免全局 switch_model 在并发任务间串扰；解析失败则回退到默认 client。
-        """
         if model and not self.dry_run:
             try:
                 base_url, api_key, _provider, _key_url, _is_fallback = _resolve_provider(model)
@@ -413,16 +474,12 @@ class LLMAdapter:
         return self._code if use_code_model else self._main
 
     def _used_model_name(self, *, use_code_model: bool, model: Optional[str]) -> str:
-        """返回本次调用实际使用的模型名（用于 ChatResponse.model 字段）。"""
         if model:
             return model
         return self._current_code_model if use_code_model else self._current_main_model
 
     # ------------------------------------------------------------------ #
     #  Bug P2：带重试退避的内部调用方法
-    #  对上游 LLM 厂商瞬时故障（APIError / 连接 / 超时 / 限流）做 3 次指数退避重试，
-    #  reraise=True 确保最后一次失败抛出原始异常便于调用方处理。
-    #  DryRun 模式不会进入这些方法（chat / achat 会提前返回 _dry_run）。
     # ------------------------------------------------------------------ #
     @retry(
         stop=stop_after_attempt(3),
@@ -431,7 +488,6 @@ class LLMAdapter:
         reraise=True,
     )
     def _invoke_sync(self, client: Any, messages: List[BaseMessage]) -> BaseMessage:
-        """同步调用 LLM，硬超时 120s（线程池兜底，防止 httpx timeout 失效导致无限挂起）。"""
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(client.invoke, messages)
             try:
@@ -447,7 +503,6 @@ class LLMAdapter:
         reraise=True,
     )
     async def _ainvoke_async(self, client: Any, messages: List[BaseMessage]) -> BaseMessage:
-        """异步调用 LLM，带重试。"""
         return await client.ainvoke(messages)
 
     @retry(
@@ -459,10 +514,6 @@ class LLMAdapter:
     async def _astream_open(
         self, client: Any, messages: List[BaseMessage]
     ) -> Tuple[Any, Optional[Any]]:
-        """打开流式连接并获取首个 chunk，失败可重试。
-
-        返回 (async_iterator, first_chunk)；first_chunk 为 None 表示空流。
-        """
         aiter = client.astream(messages)
         try:
             first = await aiter.__anext__()
@@ -472,17 +523,14 @@ class LLMAdapter:
 
     @property
     def router(self) -> MultiModelRouter:
-        """获取多模型路由器。"""
         return self._router
 
     # ------------------------------------------------------------------ #
     #  语义缓存辅助
     # ------------------------------------------------------------------ #
     def _check_cache(self, messages: List[BaseMessage]) -> Optional[str]:
-        """检查语义缓存，返回缓存内容或 None。"""
         if self._cache is None or self.dry_run:
             return None
-        # 提取最后一条 HumanMessage 作为查询键
         query_text = ""
         for m in reversed(messages):
             if isinstance(m, HumanMessage):
@@ -498,7 +546,6 @@ class LLMAdapter:
             return None
 
     def _store_cache(self, messages: List[BaseMessage], response: str) -> None:
-        """将请求-响应存入语义缓存。"""
         if self._cache is None or not response or self.dry_run:
             return
         query_text = ""
@@ -517,11 +564,6 @@ class LLMAdapter:
     #  输出护栏检查
     # ------------------------------------------------------------------ #
     def _check_output_guardrail(self, response: ChatResponse) -> ChatResponse:
-        """对 LLM 输出做安全检测和脱敏。
-
-        检测 API Key 泄露、文件路径泄露、代码执行指令等。
-        对 CRITICAL 级别问题自动脱敏并触发告警。
-        """
         if output_guardrail is None or not response.content:
             return response
 
@@ -529,7 +571,6 @@ class LLMAdapter:
         if result.passed:
             return response
 
-        # 按严重程度分类统计
         critical_count = sum(1 for i in result.issues if i.get("severity") == "CRITICAL")
         if critical_count > 0:
             logger.warning(
@@ -537,7 +578,6 @@ class LLMAdapter:
                 critical_count,
                 len(result.issues) - critical_count,
             )
-            # 触发告警
             if alert_manager is not None:
                 alert_manager.alert(
                     rule_name="output_guardrail",
@@ -547,7 +587,6 @@ class LLMAdapter:
                     details={"issues": result.issues, "model": response.model},
                 )
 
-        # 如果有脱敏版本则使用
         content = result.sanitized_text if result.sanitized else response.content
         return ChatResponse(
             content=content,
@@ -556,6 +595,27 @@ class LLMAdapter:
             usage=response.usage,
             model=response.model,
         )
+
+    # ------------------------------------------------------------------ #
+    #  Token 用量追踪（stage 级别）
+    # ------------------------------------------------------------------ #
+    def _track_token_usage(
+        self,
+        stage: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        duration_ms: float,
+    ) -> None:
+        """在 stage 级别记录 token 用量到 metrics_collector。"""
+        if metrics_collector is not None:
+            total = prompt_tokens + completion_tokens
+            metrics_collector.record_llm_call_with_stage(
+                stage=stage,
+                model=model,
+                tokens=total,
+                duration_ms=duration_ms,
+            )
 
     # ------------------------------------------------------------------ #
     #  同步调用
@@ -568,6 +628,7 @@ class LLMAdapter:
         use_code_model: bool = False,
         model: Optional[str] = None,
         task_type: str = "chat",
+        stage: str = "default",
     ) -> ChatResponse:
         # 语义缓存检查
         if not tools and not model:
@@ -599,8 +660,16 @@ class LLMAdapter:
             self.usage.add(usage)
             tool_calls = getattr(result, "tool_calls", None) or []
 
-            # 指标埋点
+            # 指标埋点（兼容旧版 + stage 级别追踪）
+            duration_ms = (time.monotonic() - _start) * 1000
             _record_llm_metrics(model_name, usage, _start)
+            self._track_token_usage(
+                stage=stage,
+                model=model_name,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                duration_ms=duration_ms,
+            )
 
             response = ChatResponse(
                 content=str(result.content) if result.content else "",
@@ -609,25 +678,20 @@ class LLMAdapter:
                 usage=usage,
                 model=model_name,
             )
-            # 存入缓存
             if not tools:
                 self._store_cache(messages, response.content)
-            # 输出护栏检查
             response = self._check_output_guardrail(response)
             return response
         except Exception as e:
             logger.exception("LLM 同步调用失败: %s", e)
-            # 检测 403 额度耗尽错误并发送事件
             self._emit_quota_error(e)
-            # fallback：如果当前用的是 code_model 且路由允许 fallback，尝试用 main_model
             if use_code and route["fallback_available"] and not model:
                 logger.warning("code_model 调用失败，尝试 fallback 到 main_model：%s", e)
                 return self.chat(
                     messages, tools=tools,
                     use_code_model=False, model=model,
-                    task_type=task_type,
+                    task_type=task_type, stage=stage,
                 )
-            # 所有重试/fallback 均已耗尽 → 降级为 DryRun 模式返回占位内容
             logger.error("LLM 所有调用路径均失败，降级为 DryRun 响应: %s", e)
             return self._dry_run(messages)
 
@@ -642,6 +706,7 @@ class LLMAdapter:
         use_code_model: bool = False,
         model: Optional[str] = None,
         task_type: str = "chat",
+        stage: str = "default",
     ) -> ChatResponse:
         # 语义缓存检查
         if not tools and not model:
@@ -673,8 +738,16 @@ class LLMAdapter:
             self.usage.add(usage)
             tool_calls = getattr(result, "tool_calls", None) or []
 
-            # 指标埋点
+            # 指标埋点（兼容旧版 + stage 级别追踪）
+            duration_ms = (time.monotonic() - _start) * 1000
             _record_llm_metrics(model_name, usage, _start)
+            self._track_token_usage(
+                stage=stage,
+                model=model_name,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                duration_ms=duration_ms,
+            )
 
             response = ChatResponse(
                 content=str(result.content) if result.content else "",
@@ -683,25 +756,20 @@ class LLMAdapter:
                 usage=usage,
                 model=model_name,
             )
-            # 存入缓存
             if not tools:
                 self._store_cache(messages, response.content)
-            # 输出护栏检查
             response = self._check_output_guardrail(response)
             return response
         except Exception as e:
             logger.exception("LLM 异步调用失败: %s", e)
-            # 检测 403 额度耗尽错误并发送事件
             self._emit_quota_error(e)
-            # fallback：如果当前用的是 code_model 且路由允许 fallback，尝试用 main_model
             if use_code and route["fallback_available"] and not model:
                 logger.warning("code_model 调用失败，尝试 fallback 到 main_model：%s", e)
                 return await self.achat(
                     messages, tools=tools,
                     use_code_model=False, model=model,
-                    task_type=task_type,
+                    task_type=task_type, stage=stage,
                 )
-            # 所有重试/fallback 均已耗尽 → 降级为 DryRun
             logger.error("LLM 异步调用所有路径均失败，降级为 DryRun: %s", e)
             return self._dry_run(messages)
 
@@ -713,25 +781,105 @@ class LLMAdapter:
         messages: List[BaseMessage],
         *,
         use_code_model: bool = False,
+        stream_mode: str = "token",
+        on_chunk: Optional[Callable[[str], None]] = None,
     ) -> AsyncIterator[str]:
+        """流式调用，支持 token/chunk 两种模式和 DryRun。
+
+        Args:
+            messages: 消息列表
+            use_code_model: 是否使用代码模型
+            stream_mode: "token" 逐 token 产出（默认，兼容旧行为）；
+                         "chunk" 使用 _TokenAccumulator 累积为完整 chunk
+            on_chunk: 可选回调，每个完整 chunk 产出后调用（仅 chunk 模式有效）
+        """
         client = self._code if use_code_model else self._main
         if client is None:
-            yield "[DryRun] 未配置 API Key，流式调用跳过。"
+            async for piece in self._dry_run_stream(messages):
+                yield piece
             return
+
         try:
-            # Bug P2：流式首字节重试——连接建立 + 首 chunk 失败时自动重试
             aiter, first_chunk = await self._astream_open(client, messages)
+            accumulator = _TokenAccumulator(callback=on_chunk) if stream_mode == "chunk" else None
+
             if first_chunk is not None:
                 content = getattr(first_chunk, "content", "") or ""
                 if content:
-                    yield content
+                    if accumulator is not None:
+                        piece = accumulator.push(content)
+                        if piece is not None:
+                            yield piece
+                    else:
+                        yield content
+
             async for chunk in aiter:
                 content = getattr(chunk, "content", "") or ""
                 if content:
-                    yield content
+                    if accumulator is not None:
+                        piece = accumulator.push(content)
+                        if piece is not None:
+                            yield piece
+                    else:
+                        yield content
+
+            if accumulator is not None:
+                remaining = accumulator.flush()
+                if remaining is not None:
+                    yield remaining
         except Exception as e:
             logger.exception("LLM 流式调用失败: %s", e)
             raise
+
+    # ------------------------------------------------------------------ #
+    #  带累积器的流式（高级接口）
+    # ------------------------------------------------------------------ #
+    async def astream_with_accumulator(
+        self,
+        messages: List[BaseMessage],
+        *,
+        use_code_model: bool = False,
+        stream_mode: str = "chunk",
+        on_chunk: Optional[Callable[[str], None]] = None,
+    ) -> AsyncIterator[str]:
+        """使用 _TokenAccumulator 的流式接口，产出完整 chunk 并回调。
+
+        等价于 astream(..., stream_mode="chunk")，提供更明确的语义入口。
+        当 stream_mode="token" 时退化为逐 token 产出（不累积）。
+
+        Args:
+            messages: 消息列表
+            use_code_model: 是否使用代码模型
+            stream_mode: "chunk"（默认，累积为完整 chunk）或 "token"（逐 token）
+            on_chunk: 每个完整 chunk 的同步回调
+
+        Yields:
+            完整的文本 chunk（句子/段落/代码块）
+        """
+        async for piece in self.astream(
+            messages,
+            use_code_model=use_code_model,
+            stream_mode=stream_mode,
+            on_chunk=on_chunk,
+        ):
+            yield piece
+
+    # ------------------------------------------------------------------ #
+    #  DryRun 流式输出
+    # ------------------------------------------------------------------ #
+    async def _dry_run_stream(
+        self, messages: List[BaseMessage]
+    ) -> AsyncIterator[str]:
+        """DryRun 模式的流式占位输出。
+
+        将 _dry_run 生成的占位内容作为单个 chunk 产出，
+        模拟一次性流式响应，使前端无需特殊处理即可展示。
+        """
+        response = self._dry_run(messages)
+        content = response.content
+        if not content:
+            return
+        yield content
 
     # ------------------------------------------------------------------ #
     #  辅助
@@ -790,10 +938,8 @@ class LLMAdapter:
 
         client = self._resolve_client(use_code_model=use_code_model, model=model)
         if client is None:
-            # DryRun 模式无法真正结构化输出，返回 None 让调用方 fallback
             return None, self._dry_run(messages)
 
-        # 在 system message 末尾追加 JSON Schema 提示
         schema = response_model.model_json_schema()
         schema_hint = (
             "\n\n**重要：必须输出严格符合以下 JSON Schema 的 JSON 对象，不要包含任何其他文字、"
@@ -807,13 +953,10 @@ class LLMAdapter:
                 augmented_messages.append(SystemMessage(content=str(m.content) + schema_hint))
             else:
                 augmented_messages.append(m)
-        # 如果没有 system message，补一个
         if not any(isinstance(m, SystemMessage) for m in augmented_messages):
             augmented_messages.insert(0, SystemMessage(content=schema_hint.strip()))
 
         try:
-            # 用 bind(response_format={"type": "json_object"}) 强制 JSON 输出
-            # 这是 OpenAI / DashScope / DeepSeek 都兼容的最稳方式
             json_client = client.bind(response_format={"type": "json_object"})
             result: BaseMessage = json_client.invoke(augmented_messages)
             usage = self._extract_usage(result)
@@ -825,7 +968,6 @@ class LLMAdapter:
                 usage=usage,
                 model=self._used_model_name(use_code_model=use_code_model, model=model),
             )
-            # 解析 + Pydantic 校验
             try:
                 data = json.loads(content)
             except json.JSONDecodeError as e:
@@ -836,24 +978,24 @@ class LLMAdapter:
                 raise ValueError(
                     f"LLM 输出不符合 {response_model.__name__} schema：{e}\n内容前200：{content[:200]}"
                 ) from e
-            # 输出护栏检查
             chat_resp = self._check_output_guardrail(chat_resp)
             return parsed, chat_resp
         except ValueError:
-            # 校验失败直接抛给调用方
             raise
         except Exception as e:
             logger.exception("chat_structured 调用失败：%s", e)
             raise
 
     def _emit_quota_error(self, exc: Exception) -> None:
-        """检测 403 额度耗尽错误并发送事件到 Dashboard。"""
         try:
             is_quota_error = (
                 isinstance(exc, openai.PermissionDeniedError)
                 and ("Free quota exhausted" in str(exc) or "AllocationQuota" in str(exc))
             )
             if is_quota_error:
+                self.quota_exhausted = True
+                self.quota_detail = str(exc)[:300]
+                self._save_quota_state()
                 logger.error("API Key 免费额度已用尽：%s", exc)
                 try:
                     from app.core.events import EventBus, EventType
@@ -875,12 +1017,7 @@ class LLMAdapter:
             pass
 
     def _dry_run(self, messages: List[BaseMessage]) -> ChatResponse:
-        """DryRun 模式：根据消息内容生成有意义的占位代码/回复。
-
-        当 API Key 未配置或额度用尽时，生成一个可解析的模板，
-        避免 AST 验证失败和 Dashboard 显示异常。
-        """
-        # 提取用户请求内容
+        """DryRun 模式：根据消息内容生成有意义的占位代码/回复。"""
         user_content = ""
         for m in reversed(messages):
             if isinstance(m, (HumanMessage, SystemMessage)):
@@ -889,7 +1026,6 @@ class LLMAdapter:
                     user_content = content
                     break
 
-        # 检测是否为代码生成请求
         code_keywords = ["代码", "实现", "python", "def ", "class ", "函数", "需求",
                          "FILE", "哈希表", "排序", "算法", "线程", "安全", "web",
                          "server", "API", "HTTP", "链表", "树", "图", "队列", "栈",
@@ -898,13 +1034,11 @@ class LLMAdapter:
         is_code_request = any(kw.lower() in user_content.lower() for kw in code_keywords)
 
         if is_code_request:
-            # 提取文件路径要求（如果有）
             file_path = "main.py"
             path_match = re.search(r"###\s*FILE\s*[:：]\s*([^\s]+)", user_content)
             if path_match:
                 file_path = path_match.group(1).strip()
 
-            # 生成通用 Python 占位代码（可被 _parse_file_sections 正确解析）
             safe_summary = user_content[:80].replace("\n", " ").replace("\"", "'")
             content = f'''### FILE: {file_path}
 """
@@ -926,7 +1060,6 @@ if __name__ == "__main__":
     placeholder()
 '''
         else:
-            # 自然语言占位回复
             safe_summary = user_content[:100] if user_content else "无内容"
             content = f"[DryRun] 当前处于 DryRun 模式（未配置有效 API Key 或额度已用尽）。\n请访问 Dashboard 配置页面配置 API Key。\n\n原始请求摘要：{safe_summary}"
 
@@ -949,4 +1082,5 @@ __all__ = [
     "ChatResponse",
     "LLMUsage",
     "MultiModelRouter",
+    "_TokenAccumulator",
 ]

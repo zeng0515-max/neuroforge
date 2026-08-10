@@ -21,6 +21,7 @@ from app.core.config import MemoryConfig, TracingConfig, settings
 from app.core.memory import MemoryManager
 from app.core.tracing import (
     TraceIdLogFilter,
+    TracingManager,
     get_trace_id,
     set_trace_id,
     setup_tracing,
@@ -125,10 +126,14 @@ def test_tracer_trace_span_decorator_exception():
 
 
 def test_setup_tracing_disabled():
-    """setup_tracing(enabled=False) 不应抛异常。"""
-    # disabled 分支直接 return，不替换全局 tracer，不初始化 OTel
+    """setup_tracing(enabled=False) 不应启用 OTel。"""
     setup_tracing(enabled=False)
     # 能执行到这里即说明未抛异常
+
+
+def test_tracing_manager_disabled_by_default():
+    """TracingManager 默认不应启用 OTel，避免测试输出 ConsoleSpanExporter JSON。"""
+    assert TracingManager().enabled is False
 
 
 def test_trace_id_log_filter():

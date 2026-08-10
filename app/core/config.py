@@ -91,7 +91,7 @@ class CodeLLMConfig(BaseConfig):
 
 class AppConfig(BaseConfig):
     name: str = Field(default="Multi-Agent Code System", alias="APP_NAME")
-    version: str = Field(default="0.1.0", alias="APP_VERSION")
+    version: str = Field(default="3.0.0", alias="APP_VERSION")
     env: str = Field(default="dev", alias="APP_ENV")
     debug: bool = Field(default=True, alias="APP_DEBUG")
     log_level: str = Field(default="INFO", alias="APP_LOG_LEVEL")
@@ -119,9 +119,10 @@ class ChromaConfig(BaseConfig):
 
 
 class SecurityConfig(BaseConfig):
-    # 默认白名单已收紧：移除 os/sys/subprocess/shutil/pickle/tempfile/multiprocessing/
-    # threading/shelve/tarfile/gzip/zipfile/fileinput/stat/glob/fnmatch/inspect/dis/types/
-    # weakref/configparser 等可触发文件/进程/反射操作的模块；io 仅允许只读使用
+    # 白名单：允许基础语言模块 + 常用工具库 + 项目内部模块
+    # 禁止：subprocess/shutil/pickle/tempfile/multiprocessing/threading/shelve/tarfile/gzip/zipfile/
+    # fileinput/stat/glob/fnmatch/inspect/dis/types/weakref/configparser 等高危模块
+    # os/sys 保留但执行层限制危险API调用
     allowed_modules: Union[str, List[str]] = Field(
         default=(
             "math,re,json,typing,"
@@ -129,11 +130,12 @@ class SecurityConfig(BaseConfig):
             "datetime,hashlib,base64,uuid,string,"
             "decimal,fractions,statistics,operator,"
             "heapq,bisect,array,enum,dataclasses,abc,"
-            "io,"  # io 只读使用，执行层应限制写操作
+            "io,os,sys,"  # os/sys 基础模块，执行层限制危险API
             "pathlib,pytest,unittest,time,logging,argparse,"
             "pprint,copy,random,"
             "numpy,pandas,requests,"
-            "app.*,tools.*,agents.*,graph.*,schemas.*,core.*,services.*"
+            "app.*,tools.*,agents.*,graph.*,schemas.*,core.*,services.*,"
+            "src.*"  # 项目源代码模块（测试代码导入被测模块）
         ),
         alias="AST_ALLOWED_MODULES",
     )

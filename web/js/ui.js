@@ -25,12 +25,7 @@ if (landing && !landing.__bound) {
   landing.addEventListener('click', enterApp);
   landing.__bound = true;
 }
-// 兜底：如果还没绑定，键盘也能进
-if (landing) {
-  document.addEventListener('keydown', function() {
-    if (!landing.classList.contains('hidden')) enterApp();
-  }, { once: true });
-}
+// 键盘不再自动进入，仅保留点击入口
 
 /* ============================================================
    V5 Group A: Symbol Cycle + Magnetic CTA + Curtain Reveal
@@ -172,6 +167,17 @@ function setAgent(short, state) {
   if (shortIndex > 0 && state === 'run') {
     const conn = document.getElementById('pc-' + shortIndex);
     if (conn) conn.classList.add('flow');
+  }
+
+  // 桥接 3D 像素 Agent 状态
+  if (window.__setPixelAgentState) {
+    const agentMap = { req: 'analyst', gen: 'coder', rev: 'reviewer', tes: 'tester' };
+    const stateMap = { idle: 'idle', run: 'working', ok: 'done', err: 'error' };
+    const agentId = agentMap[short];
+    const pixelState = stateMap[state];
+    if (agentId && pixelState) {
+      window.__setPixelAgentState(agentId, pixelState);
+    }
   }
 }
 function clearAgents() {
@@ -319,33 +325,60 @@ async function executeCode(taskId) {
     const r = await fetch(`/api/v1/tasks/${taskId}/execute`, { method: 'POST' });
     const data = await r.json();
     let html = `<div style="font-size:12px; margin-top:6px;">`;
-    html += `<div style="font-weight:600; color:${data.success ? 'var(--success)' : 'var(--danger)'};">
-      ${data.success ? '✓' : '✗'} ${escapeHtml(data.summary || '')}
-    </div>`;
-    if (data.results && data.results.length) {
-      html += `<ul style="margin-top:4px; font-size:11px;">`;
-      data.results.forEach(r => {
-        const ok = r.syntax_ok && r.import_ok;
-        const color = ok ? 'var(--success)' : 'var(--danger)';
-        html += `<li style="color:${color};">
-          <b>${escapeHtml(r.path)}</b>
-          语法:${r.syntax_ok ? '✓' : '✗(' + escapeHtml(r.syntax_error) + ')'}
-          导入:${r.import_ok ? '✓' : '✗'}
-          ${r.run_ok !== undefined && r.path.match(/^(main|app|run|__main__)\.py$/) ? '运行:' + (r.run_ok ? '✓' : '✗') : ''}
-          <span style="color:var(--text-faint);">(${r.duration_ms}ms)</span>
-        </li>`;
-        if (!r.import_ok && r.import_error) {
-          html += `<li style="color:var(--danger); font-size:10px; padding-left:16px;">${escapeHtml(r.import_error.slice(0,200))}</li>`;
+
+    if (!r.ok || !data.success) {
+      // 处理错误响应（400/500）
+      const detail = data.detail || data.message || data.summary || '未知错误';
+      let errMsg = '';
+      if (typeof detail === 'object') {
+        errMsg = detail.message || JSON.stringify(detail);
+        if (detail.violations && detail.violations.length) {
+          errMsg += '<ul style="margin-top:6px; font-size:11px; color:var(--danger);">';
+          detail.violations.forEach(v => {
+            errMsg += `<li><b>${escapeHtml(v.path || '')}</b>`;
+            if (v.violations) {
+              v.violations.forEach(vio => {
+                errMsg += `<br>&nbsp;&nbsp;• ${escapeHtml(vio.rule)}: ${escapeHtml(vio.message)} (L${vio.line})`;
+              });
+            }
+            errMsg += '</li>';
+          });
+          errMsg += '</ul>';
         }
-        if (r.run_stderr && !r.run_ok) {
-          html += `<li style="color:var(--danger); font-size:10px; padding-left:16px;">${escapeHtml(r.run_stderr.slice(0,200))}</li>`;
-        }
-      });
-      html += `</ul>`;
+      } else {
+        errMsg = String(detail);
+      }
+      html += `<div style="font-weight:600; color:var(--danger);">✗ ${escapeHtml(errMsg)}</div>`;
+      log(`代码验证失败: ${escapeHtml(errMsg)}`, 'err');
+    } else {
+      html += `<div style="font-weight:600; color:var(--success);">
+        ✓ ${escapeHtml(data.summary || '')}
+      </div>`;
+      if (data.results && data.results.length) {
+        html += `<ul style="margin-top:4px; font-size:11px;">`;
+        data.results.forEach(r => {
+          const ok = r.syntax_ok && r.import_ok;
+          const color = ok ? 'var(--success)' : 'var(--danger)';
+          html += `<li style="color:${color};">
+            <b>${escapeHtml(r.path)}</b>
+            语法:${r.syntax_ok ? '✓' : '✗(' + escapeHtml(r.syntax_error) + ')'}
+            导入:${r.import_ok ? '✓' : '✗'}
+            ${r.run_ok !== undefined && r.path.match(/^(main|app|run|__main__)\.py$/) ? '运行:' + (r.run_ok ? '✓' : '✗') : ''}
+            <span style="color:var(--text-faint);">(${r.duration_ms}ms)</span>
+          </li>`;
+          if (!r.import_ok && r.import_error) {
+            html += `<li style="color:var(--danger); font-size:10px; padding-left:16px;">${escapeHtml(r.import_error.slice(0,200))}</li>`;
+          }
+          if (r.run_stderr && !r.run_ok) {
+            html += `<li style="color:var(--danger); font-size:10px; padding-left:16px;">${escapeHtml(r.run_stderr.slice(0,200))}</li>`;
+          }
+        });
+        html += `</ul>`;
+      }
+      log(`代码验证完成: ${data.success ? '通过' : '失败'}`, data.success ? 'ok' : 'err');
     }
     html += `</div>`;
     if (box) box.innerHTML = html;
-    log(`代码验证完成: ${data.success ? '通过' : '失败'}`, data.success ? 'ok' : 'err');
   } catch (e) {
     if (box) box.innerHTML = `<div style="color:var(--danger); font-size:12px;">验证失败: ${escapeHtml(e.message)}</div>`;
     log('代码验证失败: ' + e.message, 'err');
@@ -581,9 +614,14 @@ function startSSE(taskId) {
       const phase = data.phase || '';
       const progress = data.progress;
       const message = data.message || '';
+      const errorType = data.error_type || '';
       const status = progress === -1 ? 'ERR' : progress === 100 ? 'DONE' : 'RUN';
       // 更新终端日志
       log(`[${phase.toUpperCase()}] ${message}`, progress === -1 ? 'err' : progress === 100 ? 'ok' : 'info');
+      // 检测 API 配额耗尽
+      if (errorType === 'quota_exhausted') {
+        showQuotaWarning(message);
+      }
       // 更新阶段标签
       els.phaseTag.textContent = `${phase.toUpperCase()} · ${status}`;
       // 更新 Agent 状态显示
@@ -948,3 +986,50 @@ window.executeCode = executeCode;
 window.showModifyBox = showModifyBox;
 window.hideModifyBox = hideModifyBox;
 window.submitModify = submitModify;
+
+// ================================================================
+//  API 配额耗尽警告
+// ================================================================
+const _quotaStorageKey = 'nf_quota_warning_dismissed';
+
+function showQuotaWarning(message) {
+  const banner = document.getElementById('quota-warning');
+  if (!banner) return;
+  const desc = banner.querySelector('.qw-desc');
+  if (message) desc.textContent = message;
+  banner.hidden = false;
+}
+
+function hideQuotaWarning() {
+  const banner = document.getElementById('quota-warning');
+  if (banner) banner.hidden = true;
+}
+
+function initQuotaWarning() {
+  const banner = document.getElementById('quota-warning');
+  if (!banner) return;
+  // 检查后端配额状态
+  fetch('/api/v1/config/llm', { cache: 'no-cache' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.quota_exhausted) {
+        showQuotaWarning();
+      }
+    })
+    .catch(() => {});
+  // 更换按钮：打开配置弹窗
+  const fixBtn = document.getElementById('quota-fix-btn');
+  if (fixBtn) fixBtn.addEventListener('click', () => {
+    if (window.configModal) window.configModal.open();
+  });
+  // 关闭按钮
+  const closeBtn = document.getElementById('quota-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', hideQuotaWarning);
+}
+
+// 页面加载完成后初始化配额警告
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initQuotaWarning);
+} else {
+  initQuotaWarning();
+}

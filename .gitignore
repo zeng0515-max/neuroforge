@@ -4,8 +4,8 @@ __pycache__/
 *.pyo
 *.egg-info/
 *.egg
-dist/
-build/
+/dist/
+/build/
 .eggs/
 *.so
 *.manifest
@@ -39,7 +39,8 @@ coverage.xml
 htmlcov/
 
 # ===== Database & Runtime Data =====
-data/
+data/*
+!data/.gitkeep
 *.db
 *.db-shm
 *.db-wal
@@ -51,6 +52,7 @@ nul
 
 # ===== Generated/Transient =====
 generated.py
+*.pid
 
 # ===== Docker =====
 .docker/
@@ -61,3 +63,22 @@ web/node_modules/
 
 # ===== Documentation Builds =====
 *.doccx
+
+# ===== Local Agent Workspace & Runtime =====
+.superpowers/
+.workbuddy/
+semantic_cache/
+captures/
+debug.log
+.trash/
+
+# ===== Generated Media & Screenshots =====
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.mp4
+/*.webm
+
+# ===== Benchmark Working Files =====
+/benchmark_results.json

@@ -140,9 +140,10 @@ def test_delete_task(client: TestClient) -> None:
 async def async_client() -> AsyncIterator[httpx.AsyncClient]:
     """异步 HTTP 客户端，直接对话 ASGI app。"""
     from app.main import app
-    transport = ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
 
 
 @pytest.mark.asyncio

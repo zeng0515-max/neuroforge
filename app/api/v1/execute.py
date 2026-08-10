@@ -23,9 +23,22 @@ async def execute_task_code(task_id: str) -> Dict[str, Any]:
     if db.get_task(task_id) is None and task_id not in _final_states:
         raise HTTPException(404, f"任务 {task_id} 不存在")
 
+    # 优先从 DB 读取文件，DB 为空时回退到内存态 code_package
     db_files = db.list_files(task_id)
     if not db_files:
-        raise HTTPException(400, f"任务 {task_id} 没有代码文件可验证")
+        state = _final_states.get(task_id)
+        if state:
+            pkg = state.get("code_package")
+            if pkg and hasattr(pkg, "files") and pkg.files:
+                db_files = [
+                    type("FileLike", (), {
+                        "path": f.path, "content": f.content,
+                        "language": f.language, "line_count": f.line_count,
+                    })()
+                    for f in pkg.files
+                ]
+        if not db_files:
+            raise HTTPException(400, f"任务 {task_id} 没有代码文件可验证")
 
     files = [
         {"path": f.path, "content": f.content or "", "language": f.language or "python"}

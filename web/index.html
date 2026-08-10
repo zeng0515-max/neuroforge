@@ -15,15 +15,42 @@
   }
 }
 </script>
-<link rel="stylesheet" href="css/style.css?v=20260803">
+<link rel="stylesheet" href="css/theme.css?v=1">
+<link rel="stylesheet" href="css/style.css?v=20260804d">
 <script>
 window.__errors = [];
 window.addEventListener('error', function(e) {
   window.__errors.push({type:'error', msg: e.message, src: e.filename, line: e.lineno, col: e.colno, stack: e.error && e.error.stack});
+  if (e.target && (e.target.tagName === 'LINK' || e.target.tagName === 'SCRIPT')) {
+    window.__retryResource(e.target);
+  }
 });
 window.addEventListener('unhandledrejection', function(e) {
   window.__errors.push({type:'rejection', msg: String(e.reason), stack: e.reason && e.reason.stack});
 });
+
+window.__retried = {};
+window.__retryResource = function(el) {
+  var key = el.src || el.href;
+  if (!key || window.__retried[key]) return;
+  window.__retried[key] = (window.__retried[key] || 0) + 1;
+  var attempt = window.__retried[key];
+  if (attempt > 3) return;
+  var delay = 200 * attempt;
+  setTimeout(function() {
+    if (el.tagName === 'LINK') {
+      var h = el.href;
+      el.href = 'about:blank';
+      setTimeout(function() { el.href = h + (h.indexOf('?') >= 0 ? '&' : '?') + 'retry=' + Date.now(); }, 50);
+    } else if (el.tagName === 'SCRIPT') {
+      var s = document.createElement('script');
+      s.src = el.src + (el.src.indexOf('?') >= 0 ? '&' : '?') + 'retry=' + Date.now();
+      s.type = el.type;
+      s.async = false;
+      el.parentNode.replaceChild(s, el);
+    }
+  }, delay);
+};
 </script>
 </head>
 <body>
@@ -110,7 +137,7 @@ window.addEventListener('unhandledrejection', function(e) {
     <div class="topbar-right">
       <div class="status-chip">
         <span class="led"></span>
-        <span id="status-text">ONLINE · qwen3.7-max</span>
+        <span id="status-text">ONLINE · deepseek-chat</span>
       </div>
       <div class="model-wrap">
         <span class="model-label">模型</span>
@@ -126,6 +153,17 @@ window.addEventListener('unhandledrejection', function(e) {
       <button id="config-btn" class="accent-btn config-btn" type="button" title="配置 API 大模型">⚙ 配置</button>
     </div>
   </header>
+
+  <!-- ===================== API 配额警告横幅 ===================== -->
+  <div id="quota-warning" class="quota-warning" hidden>
+    <div class="qw-icon">⚠️</div>
+    <div class="qw-body">
+      <div class="qw-title">API Key 免费额度已用尽</div>
+      <div class="qw-desc">当前处于 DryRun 降级模式，生成的代码为占位内容。请更换 API Key 以恢复真实 LLM 调用。</div>
+    </div>
+    <button id="quota-fix-btn" class="qw-btn" type="button">更换 API Key</button>
+    <button id="quota-close-btn" class="qw-close" type="button" aria-label="关闭">×</button>
+  </div>
 
   <!-- ===================== 主体 ===================== -->
   <main class="main">
@@ -370,7 +408,7 @@ window.addEventListener('unhandledrejection', function(e) {
         <div class="cfg-hint" id="cfg-key-hint">获取后填入，保存即生效，无需重启服务</div>
 
         <label class="cfg-label">主模型</label>
-        <input id="cfg-model" class="cfg-input" type="text" placeholder="qwen3.7-max" />
+        <input id="cfg-model" class="cfg-input" type="text" placeholder="deepseek-chat" />
 
         <label class="cfg-label">代码模型（可选，留空与主模型一致）</label>
         <input id="cfg-code-model" class="cfg-input" type="text" placeholder="留空则使用主模型" />
@@ -469,31 +507,6 @@ window.addEventListener('unhandledrejection', function(e) {
     enterApp();
   });
 
-  // 2b. 触摸设备兜底（touchstart 比 click 更快响应）
-  document.addEventListener('touchstart', function onFirstTouch(e) {
-    initEls();
-    if (!landing || landing.classList.contains('hidden')) return;
-    var t = e.target;
-    if (t.closest('#config-modal') || t.closest('.config-modal-card')) return;
-    enterApp();
-  }, { passive: true, once: true });
-
-  // 3. 键盘触发
-  document.addEventListener('keydown', function onFirstKey() {
-    initEls();
-    if (landing && !landing.classList.contains('hidden')) {
-      enterApp();
-    }
-  }, { once: true });
-
-  // 4. 定时自动进入（3.5s 兜底）
-  setTimeout(function() {
-    initEls();
-    if (landing && !landing.classList.contains('hidden')) {
-      enterApp();
-    }
-  }, 3500);
-
   // 5. 失败回退：3.5s 后强制移除 curtain（不依赖 transition）
   setTimeout(function() {
     initEls();
@@ -512,6 +525,6 @@ window.addEventListener('unhandledrejection', function(e) {
 </script>
 
 <script src="js/config.js?v=1"></script>
-<script type="module" src="js/main.js?v=5"></script>
+<script type="module" src="js/main.js?v=10"></script>
 </body>
 </html>

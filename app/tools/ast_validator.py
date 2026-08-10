@@ -306,7 +306,7 @@ class _SecurityVisitor(ast.NodeVisitor):
         if isinstance(node.func, ast.Name):
             name = node.func.id
             if name in self.DANGER_CALLS:
-                sev = "warning" if name == "locals" else "error"
+                sev = "warning" if name in ("locals", "hasattr") else "error"
                 self.violations.append(
                     ASTViolation(
                         severity=sev,

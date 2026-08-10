@@ -214,7 +214,6 @@ export const APLUS_PLANET_VS = `
 `;
 
 export const APLUS_PLANET_FS = `
-  precision highp float;
   varying vec3 vWorldPos;
   varying vec3 vNormalW;
   varying vec3 vOriginalPos;
@@ -520,6 +519,7 @@ export const FLOW_PARTICLE_VS = `
 `;
 
 export const FLOW_PARTICLE_FS = `
+  precision highp float;
   varying vec3 vColor;
   varying float vAlpha;
   varying float vDepth;
@@ -622,7 +622,7 @@ export const FS_VEL_COPY = `
 // ============ Shockwave Shader ============
 export const SHOCKWAVE_VS = `varying vec3 vP; varying vec2 vUv; void main(){ vUv=uv; vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`;
 
-export const SHOCKWAVE_FS = `varying vec2 vUv; varying vec3 vP; uniform vec3 uColor; uniform float uWidth, uT, uK;
+export const SHOCKWAVE_FS = `precision highp float; varying vec2 vUv; varying vec3 vP; uniform vec3 uColor; uniform float uWidth, uT, uK;
   void main(){
     float d = abs(length(vP.xy) - mix(0.975, 1.025, uT));
     float ring = smoothstep(uWidth, 0.0, d);
@@ -692,6 +692,7 @@ export const QUANTUM_VS = `
   }`;
 
 export const QUANTUM_FS = `
+  precision highp float;
   varying vec3 vNormalW; varying vec3 vPosW;
   uniform vec3 uColorA; uniform vec3 uColorB; uniform vec3 uColorC;
   uniform float uTime; uniform float uMouse;
@@ -724,6 +725,7 @@ export const QUANTUM_SHELL_VS = `
   }`;
 
 export const QUANTUM_SHELL_FS = `
+  precision highp float;
   uniform float uTime, uLevel;
   varying vec3 vN; varying vec3 vP;
   void main(){

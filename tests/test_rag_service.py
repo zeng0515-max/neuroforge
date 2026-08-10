@@ -275,3 +275,33 @@ def test_collection_rebuild_on_dim_change() -> None:
     # 新 collection 应被 get_or_create
     mock_client.get_or_create_collection.assert_called_once()
     assert svc._collection is new_coll
+
+
+def test_rag_chroma_client_disables_telemetry() -> None:
+    """RAG 初始化 ChromaDB 时应显式关闭匿名 telemetry。"""
+    svc = RAGService.__new__(RAGService)
+    svc.embedding = _ChromaDefaultEmbedding()
+
+    mock_client = MagicMock()
+    mock_client.get_collection.side_effect = ValueError("collection missing")
+    new_coll = MagicMock()
+    new_coll.count.return_value = 0
+    mock_client.get_or_create_collection.return_value = new_coll
+
+    captured: Dict[str, Any] = {}
+
+    def fake_client(*args: Any, **kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return mock_client
+
+    with patch("app.tools.rag_service.settings") as mock_s, \
+            patch("chromadb.PersistentClient", side_effect=fake_client):
+        mock_s.chroma.persist_dir = "/tmp/test_chroma_telemetry"
+        mock_s.chroma.collection_name = "test_coll"
+        mock_s.chroma.embedding_model = "hash"
+        mock_s.chroma.embedding_dim = 64
+        svc._init_chroma()
+
+    assert "settings" in captured
+    assert captured["settings"].anonymized_telemetry is False
+    assert svc._collection is new_coll

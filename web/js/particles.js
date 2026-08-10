@@ -278,8 +278,8 @@ export function makeFlowPP(renderer, W, H, opts) {
     return { scene:s, cam:c, mat:q.material };
   }
 
-  const simPosPass = buildSimPass(GLSL_NOISE + FS_POS_UPDATE);
-  const simVelPass = buildSimPass(FS_VEL_COPY);
+  const simPosPass = buildSimPass(`precision highp float;\n` + GLSL_NOISE + FS_POS_UPDATE);
+  const simVelPass = buildSimPass(`precision highp float;\n` + FS_VEL_COPY);
 
   const pointsGeom = new THREE.BufferGeometry();
   const idxUV = new Float32Array(N*2);
@@ -308,6 +308,7 @@ export function makeFlowPP(renderer, W, H, opts) {
       }
     `,
     fragmentShader: `
+      precision highp float;
       uniform sampler2D uTex; uniform float uAlpha;
       void main(){
         vec4 c = texture2D(uTex, gl_PointCoord);

@@ -1,13 +1,14 @@
 """Prompt 注入防护与输出安全检测模块。
 
-包含：
-- InputGuardrail：检查用户输入中的注入模式
-- OutputGuardrail：检查 LLM 输出中的敏感内容
+OWASP LLM Top 10 防护覆盖：
+- Prompt Injection / Insecure Output Handling / Sensitive Information Disclosure
 """
 from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional, Pattern, Set
 
 from app.core.config import settings
@@ -15,86 +16,154 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class SecuritySeverity(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+@dataclass
+class SecurityFinding:
+    severity: SecuritySeverity
+    category: str
+    description: str
+    remediation: str = ""
+    matched_text: str = ""
+    pattern: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 # ====================================================================== #
-#  常见注入模式正则
+#  注入模式正则（OWASP LLM Top 10 覆盖）
 # ====================================================================== #
 
-# System prompt 泄露尝试
 _SYSTEM_PROMPT_LEAK_PATTERNS: List[Pattern[str]] = [
     re.compile(r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions|directions|prompts)", re.IGNORECASE),
     re.compile(r"forget\s+(all\s+)?(previous|above|prior)\s+(instructions|directions|prompts)", re.IGNORECASE),
     re.compile(r"disregard\s+(all\s+)?(previous|above|prior)\s+(instructions|directions)", re.IGNORECASE),
-    re.compile(r"print\s+(your\s+)?(system\s+)?prompt", re.IGNORECASE),
-    re.compile(r"show\s+(me\s+)?(your\s+)?(system\s+)?(prompt|instructions)", re.IGNORECASE),
-    re.compile(r"output\s+(your\s+)?(system\s+)?prompt", re.IGNORECASE),
-    re.compile(r"reveal\s+(your\s+)?(system\s+)?prompt", re.IGNORECASE),
+    re.compile(r"(print|show|output|reveal|tell\s+me|what\s+is)\s+(your\s+)?(system\s+)?prompt", re.IGNORECASE),
     re.compile(r"repeat\s+(all\s+)?(the\s+)?(above|previous|initial)\s+(text|prompt|message|instructions)", re.IGNORECASE),
-    re.compile(r"what\s+is\s+(your\s+)?(system\s+)?prompt", re.IGNORECASE),
-    re.compile(r"tell\s+me\s+(your\s+)?(system\s+)?prompt", re.IGNORECASE),
-    re.compile(r"你(的\s+)?(系统\s+)?提示词\s+是\s+什么", re.IGNORECASE),
-    re.compile(r"忽略\s+(以上|之前|所有)\s+(指令|提示|要求)", re.IGNORECASE),
-    re.compile(r"输出\s+你(的\s+)?(系统\s+)?提示词", re.IGNORECASE),
+    re.compile(r"(你(的\s+)?(系统\s+)?提示词\s+是\s+什么|忽略\s+(以上|之前|所有)\s+(指令|提示|要求)|输出\s+你(的\s+)?(系统\s+)?提示词)", re.IGNORECASE),
 ]
 
-# 角色扮演注入
 _ROLE_PLAY_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"you\s+are\s+now\s+", re.IGNORECASE),
-    re.compile(r"act\s+as\s+if\s+you\s+are", re.IGNORECASE),
-    re.compile(r"pretend\s+(to\s+be|that\s+you\s+are)", re.IGNORECASE),
-    re.compile(r"from\s+now\s+on\s+you\s+are", re.IGNORECASE),
-    re.compile(r"你现在\s+(是|扮演|作为)", re.IGNORECASE),
-    re.compile(r"假装\s+你\s+是", re.IGNORECASE),
-    re.compile(r"从现在开始\s+你\s+是", re.IGNORECASE),
-    re.compile(r"请\s+扮演", re.IGNORECASE),
+    re.compile(r"(you\s+are\s+now|act\s+as\s+if\s+you\s+are|pretend\s+(to\s+be|that\s+you\s+are)|from\s+now\s+on\s+you\s+are)", re.IGNORECASE),
+    re.compile(r"(你现在\s+(是|扮演|作为)|假装\s+你\s+是|从现在开始\s+你\s+是|请\s+扮演)", re.IGNORECASE),
 ]
 
-# 分隔符绕过
 _DELIMITER_BYPASS_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"-{5,}"),          # 多个连续横线（YAML 分隔符）
+    re.compile(r"-{5,}"),
     re.compile(r"_+end\s+(of\s+)?(text|input|prompt|message)_+", re.IGNORECASE),
-    re.compile(r"<\|im_end\|>"),   # ChatML 格式绕过
-    re.compile(r"<\|end\|>"),      # 通用结束标记
-    re.compile(r"<\s*/\s*s\s*>"),  # </s> 结束标记
+    re.compile(r"<\|im_end\|>|<\|end\|>|<\s*/\s*s\s*>"),
 ]
 
-# Base64 编码指令
 _BASE64_PATTERNS: List[Pattern[str]] = [
     re.compile(r"(?:begin|decode|decode64|base64)\s*(?:decode|base64)?\s*[:\s].{20,}[A-Za-z0-9+/=]{20,}", re.IGNORECASE),
-    re.compile(r"以下\s+(base64|base-64|编码)\s+(内容|文本|指令)", re.IGNORECASE),
-    re.compile(r"base64\s+解码\s*[:：]", re.IGNORECASE),
+    re.compile(r"(以下\s+(base64|base-64|编码)\s+(内容|文本|指令)|base64\s+解码\s*[:：])", re.IGNORECASE),
 ]
 
-# 合并所有注入模式
-_INPUT_PATTERNS: List[Pattern[str]] = (
-    _SYSTEM_PROMPT_LEAK_PATTERNS
-    + _ROLE_PLAY_PATTERNS
-    + _DELIMITER_BYPASS_PATTERNS
-    + _BASE64_PATTERNS
+_SQL_INJECTION_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|EXEC|EXECUTE)\b\s+", re.IGNORECASE),
+    re.compile(r"(--|#|/\*)\s*(OR|AND)\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+", re.IGNORECASE),
+    re.compile(r";\s*(DROP|DELETE|UPDATE|INSERT)\s+", re.IGNORECASE),
+    re.compile(r"\b(WAITFOR|DELAY|BENCHMARK|SLEEP)\b", re.IGNORECASE),
+    re.compile(r"information_schema|xp_cmdshell", re.IGNORECASE),
+    re.compile(r"CHAR\s*\(\s*\d+|CONVERT\s*\(\s*(int|varchar)", re.IGNORECASE),
+]
+
+_XSS_INJECTION_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"<script[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL),
+    re.compile(r"<iframe[^>]*>|javascript\s*:", re.IGNORECASE),
+    re.compile(r"on\w+\s*=\s*['\"]?[^'\"]*", re.IGNORECASE),
+    re.compile(r"<img[^>]*onerror\s*=", re.IGNORECASE),
+    re.compile(r"document\.(cookie|location|write)", re.IGNORECASE),
+    re.compile(r"alert\s*\(\s*['\"]", re.IGNORECASE),
+]
+
+_COMMAND_INJECTION_PATTERNS: List[Pattern[str]] = [
+    re.compile(r";\s*(ls|cat|rm|chmod|chown|wget|curl|bash|sh|nc|python|perl|ruby)\b", re.IGNORECASE),
+    re.compile(r"\|\s*(ls|cat|rm|chmod|chown|wget|curl|bash|sh|nc)\b", re.IGNORECASE),
+    re.compile(r"`[^`]+`|\$\([^)]+\)", re.IGNORECASE),
+    re.compile(r">\s*/etc/(passwd|shadow)", re.IGNORECASE),
+    re.compile(r"\b(wget|curl)\s+http", re.IGNORECASE),
+    re.compile(r"&&\s*(rm|chmod|chown|bash|sh|nc)\b", re.IGNORECASE),
+]
+
+_PATH_TRAVERSAL_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"(?:\.\.\\|\.\./){2,}"),
+    re.compile(r"%2e%2e%2f|%2e%2e/", re.IGNORECASE),
+    re.compile(r"etc/(passwd|shadow|hosts)", re.IGNORECASE),
+    re.compile(r"boot\.ini|win\.ini|system32", re.IGNORECASE),
+    re.compile(r"/proc/self/(environ|cmdline)", re.IGNORECASE),
+    re.compile(r"file:///", re.IGNORECASE),
+]
+
+_LDAP_INJECTION_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"[\*\)\(].*?\)\s*\(", re.IGNORECASE),
+    re.compile(r"\|\s*\(.*?=.*?\)", re.IGNORECASE),
+    re.compile(r"objectClass\s*=\s*.*\*", re.IGNORECASE),
+    re.compile(r"\(\|.*?\(.*?=.*?\)", re.IGNORECASE),
+    re.compile(r"admin\s*\)", re.IGNORECASE),
+]
+
+_INJECTION_PATTERNS: List[Pattern[str]] = (
+    _SYSTEM_PROMPT_LEAK_PATTERNS + _ROLE_PLAY_PATTERNS
+    + _DELIMITER_BYPASS_PATTERNS + _BASE64_PATTERNS
+    + _SQL_INJECTION_PATTERNS + _XSS_INJECTION_PATTERNS
+    + _COMMAND_INJECTION_PATTERNS + _PATH_TRAVERSAL_PATTERNS
+    + _LDAP_INJECTION_PATTERNS
 )
 
+
 # ====================================================================== #
-#  输出敏感内容检测模式
+#  PII 检测模式
 # ====================================================================== #
 
-# API Key / Token 泄露
-_API_KEY_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"sk-[A-Za-z0-9]{20,}", re.IGNORECASE),                # OpenAI 格式
+_EMAIL_PATTERN: Pattern[str] = re.compile(
+    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
+)
+_PHONE_PATTERN: Pattern[str] = re.compile(
+    r"(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{4}"
+)
+_CREDIT_CARD_PATTERN: Pattern[str] = re.compile(
+    r"\b(?:\d{4}[- ]?){3}\d{4}\b"
+)
+_SSN_PATTERN: Pattern[str] = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CHINA_ID_PATTERN: Pattern[str] = re.compile(
+    r"\b[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b"
+)
+_IP_PATTERN: Pattern[str] = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+)
+_SECRET_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"sk-[A-Za-z0-9]{20,}", re.IGNORECASE),
     re.compile(r"api[_-]?key[=:]['\"]?[A-Za-z0-9_\-]{16,}", re.IGNORECASE),
     re.compile(r"token[=:]['\"]?[A-Za-z0-9_\-]{16,}", re.IGNORECASE),
-    re.compile(r"AKID[A-Za-z0-9]{15,}", re.IGNORECASE),               # 阿里云 AccessKey
+    re.compile(r"AKID[A-Za-z0-9]{15,}", re.IGNORECASE),
     re.compile(r"secret[=:]['\"]?[A-Za-z0-9_\-]{16,}", re.IGNORECASE),
+    re.compile(r"password[=:]['\"]?[^\s'\"]{4,}", re.IGNORECASE),
 ]
 
-# 文件路径泄露
+
+# ====================================================================== #
+#  输出敏感内容检测
+# ====================================================================== #
+
+_API_KEY_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"sk-[A-Za-z0-9]{20,}", re.IGNORECASE),
+    re.compile(r"api[_-]?key[=:]['\"]?[A-Za-z0-9_\-]{16,}", re.IGNORECASE),
+    re.compile(r"token[=:]['\"]?[A-Za-z0-9_\-]{16,}", re.IGNORECASE),
+    re.compile(r"AKID[A-Za-z0-9]{15,}", re.IGNORECASE),
+    re.compile(r"secret[=:]['\"]?[A-Za-z0-9_\-]{16,}", re.IGNORECASE),
+]
 _FILE_PATH_PATTERNS: List[Pattern[str]] = [
     re.compile(r"/etc/(passwd|shadow|hosts|config)", re.IGNORECASE),
     re.compile(r"/home/[A-Za-z0-9_]+/\.", re.IGNORECASE),
     re.compile(r"~/?\.(ssh|aws|config|gitconfig)", re.IGNORECASE),
     re.compile(r"/var/log/", re.IGNORECASE),
-    re.compile(r"\\\\?[A-Za-z]:\\\\", re.IGNORECASE),  # Windows 路径
+    re.compile(r"\\\\?[A-Za-z]:\\\\", re.IGNORECASE),
 ]
-
-# 代码执行指令
 _CODE_EXEC_PATTERNS: List[Pattern[str]] = [
     re.compile(r"exec\s*\(.*\)", re.IGNORECASE),
     re.compile(r"eval\s*\(.*\)", re.IGNORECASE),
@@ -104,27 +173,24 @@ _CODE_EXEC_PATTERNS: List[Pattern[str]] = [
     re.compile(r"compile\s*\(.*\)", re.IGNORECASE),
 ]
 
+_PII_CHECKS = [
+    ("email", _EMAIL_PATTERN, "[REDACTED_EMAIL]"),
+    ("phone", _PHONE_PATTERN, "[REDACTED_PHONE]"),
+    ("credit_card", _CREDIT_CARD_PATTERN, "[REDACTED_CC]"),
+    ("ssn", _SSN_PATTERN, "[REDACTED_SSN]"),
+    ("china_id", _CHINA_ID_PATTERN, "[REDACTED_ID]"),
+    ("ip", _IP_PATTERN, "[REDACTED_IP]"),
+]
+
 
 # ====================================================================== #
 #  InputGuardrail
 # ====================================================================== #
 
 class InputGuardrailResult:
-    """输入校验结果。"""
-    passed: bool
-    blocked: bool
-    reason: str
-    matched_pattern: str
-    details: Dict[str, Any]
-
-    def __init__(
-        self,
-        passed: bool = True,
-        blocked: bool = False,
-        reason: str = "",
-        matched_pattern: str = "",
-        details: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    def __init__(self, passed: bool = True, blocked: bool = False,
+                 reason: str = "", matched_pattern: str = "",
+                 details: Optional[Dict[str, Any]] = None) -> None:
         self.passed = passed
         self.blocked = blocked
         self.reason = reason
@@ -133,79 +199,75 @@ class InputGuardrailResult:
 
 
 class InputGuardrail:
-    """用户输入注入检测防护栏。
+    """用户输入注入检测防护栏。"""
 
-    检测模式：
-    - System prompt 泄露尝试
-    - 角色扮演注入
-    - 分隔符绕过
-    - Base64 编码指令
-
-    支持可配置白名单/黑名单。
-    """
-
-    def __init__(
-        self,
-        enabled: bool = True,
-        whitelist: Optional[Set[str]] = None,
-        blacklist: Optional[Set[str]] = None,
-    ) -> None:
+    def __init__(self, enabled: bool = True,
+                 whitelist: Optional[Set[str]] = None,
+                 blacklist: Optional[Set[str]] = None) -> None:
         self._enabled = enabled
         self._whitelist: Set[str] = whitelist or set()
         self._blacklist: Set[str] = blacklist or set()
-        self._patterns = _INPUT_PATTERNS
+        self._patterns = _INJECTION_PATTERNS
+
+    def _detect_prompt_injection_advanced(self, text: str) -> List[SecurityFinding]:
+        """多策略高级注入检测：关键词密度 + 多模式组合命中。"""
+        findings: List[SecurityFinding] = []
+        injection_keywords = [
+            "ignore", "forget", "disregard", "override", "bypass",
+            "unrestricted", "jailbreak", "danmode", "evil",
+        ]
+        keyword_count = sum(1 for kw in injection_keywords if kw.lower() in text.lower())
+        if keyword_count >= 3:
+            findings.append(SecurityFinding(
+                severity=SecuritySeverity.HIGH, category="prompt_injection",
+                description=f"检测到 {keyword_count} 个注入关键词",
+                remediation="审查输入上下文，限制指令覆盖",
+                matched_text=text[:80], pattern="keyword_density",
+            ))
+        for i, pattern in enumerate(self._patterns):
+            matches = pattern.findall(text)
+            if matches:
+                findings.append(SecurityFinding(
+                    severity=SecuritySeverity.MEDIUM, category="prompt_injection",
+                    description=f"正则模式 {i} 命中 {len(matches)} 处",
+                    remediation="过滤或转义匹配内容",
+                    matched_text=str(matches[0])[:80] if matches else "",
+                    pattern=pattern.pattern[:80],
+                ))
+                if len(findings) >= 5:
+                    break
+        return findings
 
     def check(self, text: str) -> InputGuardrailResult:
-        """检查输入文本是否存在注入模式。
-
-        Args:
-            text: 用户输入文本
-
-        Returns:
-            InputGuardrailResult: 校验结果
-        """
         if not self._enabled or not text:
             return InputGuardrailResult()
-
-        # 白名单检查：包含白名单关键词的直接放行
         if self._whitelist:
-            for keyword in self._whitelist:
-                if keyword.lower() in text.lower():
+            for kw in self._whitelist:
+                if kw.lower() in text.lower():
                     return InputGuardrailResult()
-
-        # 黑名单检查：包含黑名单关键词的直接拦截
         if self._blacklist:
-            for keyword in self._blacklist:
-                if keyword.lower() in text.lower():
+            for kw in self._blacklist:
+                if kw.lower() in text.lower():
                     return InputGuardrailResult(
-                        passed=False,
-                        blocked=True,
-                        reason=f"输入包含黑名单关键词: {keyword}",
-                        matched_pattern="blacklist",
-                        details={"keyword": keyword},
+                        passed=False, blocked=True,
+                        reason=f"输入包含黑名单关键词: {kw}",
+                        matched_pattern="blacklist", details={"keyword": kw},
                     )
-
-        # 正则模式匹配
         for pattern in self._patterns:
             match = pattern.search(text)
             if match:
                 matched = match.group(0)
-                logger.warning("输入注入检测命中: pattern=%s, matched=%s", pattern.pattern[:50], matched[:80])
+                logger.warning("输入注入检测命中: pattern=%s, matched=%s",
+                               pattern.pattern[:50], matched[:80])
                 return InputGuardrailResult(
-                    passed=False,
-                    blocked=True,
+                    passed=False, blocked=True,
                     reason=f"检测到疑似注入模式: {matched[:100]}",
                     matched_pattern=pattern.pattern[:80],
                     details={"matched": matched, "pattern": pattern.pattern[:80]},
                 )
-
         return InputGuardrailResult()
 
     def check_request(self, request_text: str) -> None:
-        """检查请求输入，失败时抛出 ValueError。
-
-        方便 FastAPI 依赖注入使用。
-        """
         result = self.check(request_text)
         if not result.passed and result.blocked:
             raise ValueError(result.reason)
@@ -216,19 +278,9 @@ class InputGuardrail:
 # ====================================================================== #
 
 class OutputGuardrailResult:
-    """输出校验结果。"""
-    passed: bool
-    sanitized: bool
-    issues: List[Dict[str, Any]]
-    sanitized_text: str
-
-    def __init__(
-        self,
-        passed: bool = True,
-        sanitized: bool = False,
-        issues: Optional[List[Dict[str, Any]]] = None,
-        sanitized_text: str = "",
-    ) -> None:
+    def __init__(self, passed: bool = True, sanitized: bool = False,
+                 issues: Optional[List[Dict[str, Any]]] = None,
+                 sanitized_text: str = "") -> None:
         self.passed = passed
         self.sanitized = sanitized
         self.issues = issues or []
@@ -236,90 +288,114 @@ class OutputGuardrailResult:
 
 
 class OutputGuardrail:
-    """LLM 输出内容安全检测防护栏。
-
-    检测模式：
-    - API Key / Token 泄露
-    - 文件路径泄露
-    - 代码执行指令
-    """
+    """LLM 输出内容安全检测防护栏。"""
 
     def __init__(self, enabled: bool = True, auto_sanitize: bool = False) -> None:
         self._enabled = enabled
         self._auto_sanitize = auto_sanitize
 
+    def _llm_sanitize_output(self, text: str, findings: List[Dict[str, Any]]) -> str:
+        """LLM 输出净化存根 — 标记为需 LLM 审核。"""
+        if not findings:
+            return text
+        logger.warning("LLM 输出需 LLM 审核: %d 个问题", len(findings))
+        return f"[LLM_SANITIZE_PENDING] {text}"
+
     def check(self, text: str) -> OutputGuardrailResult:
-        """检查 LLM 输出中是否包含敏感内容。
-
-        Args:
-            text: LLM 输出文本
-
-        Returns:
-            OutputGuardrailResult: 校验结果
-        """
         if not self._enabled or not text:
             return OutputGuardrailResult()
-
         issues: List[Dict[str, Any]] = []
         sanitized = text
 
-        # 1. 检查 API Key 泄露
         for pattern in _API_KEY_PATTERNS:
-            matches = pattern.findall(text)
-            for match in matches:
-                issues.append({
-                    "type": "api_key_leak",
-                    "severity": "CRITICAL",
-                    "matched": match[:30] + "...",
-                    "pattern": pattern.pattern[:60],
-                })
+            for match in pattern.findall(text):
+                issues.append({"type": "api_key_leak", "severity": "CRITICAL",
+                               "matched": match[:30] + "...", "pattern": pattern.pattern[:60]})
                 if self._auto_sanitize:
                     sanitized = sanitized.replace(match, "[REDACTED_API_KEY]")
 
-        # 2. 检查文件路径泄露
         for pattern in _FILE_PATH_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                issues.append({
-                    "type": "path_leak",
-                    "severity": "WARNING",
-                    "matched": match.group(0)[:50],
-                    "pattern": pattern.pattern[:60],
-                })
+            m = pattern.search(text)
+            if m:
+                issues.append({"type": "path_leak", "severity": "WARNING",
+                               "matched": m.group(0)[:50], "pattern": pattern.pattern[:60]})
                 if self._auto_sanitize:
-                    sanitized = sanitized.replace(match.group(0), "[REDACTED_PATH]")
+                    sanitized = sanitized.replace(m.group(0), "[REDACTED_PATH]")
 
-        # 3. 检查代码执行指令
         for pattern in _CODE_EXEC_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                issues.append({
-                    "type": "code_exec_instruction",
-                    "severity": "WARNING",
-                    "matched": match.group(0)[:50],
-                    "pattern": pattern.pattern[:60],
-                })
+            m = pattern.search(text)
+            if m:
+                issues.append({"type": "code_exec_instruction", "severity": "WARNING",
+                               "matched": m.group(0)[:50], "pattern": pattern.pattern[:60]})
                 if self._auto_sanitize:
-                    sanitized = sanitized.replace(match.group(0), "[REDACTED_CODE]")
+                    sanitized = sanitized.replace(m.group(0), "[REDACTED_CODE]")
 
-        passed = len(issues) == 0
+        for pii_type, pattern, replacement in _PII_CHECKS:
+            m = pattern.search(text)
+            if m:
+                issues.append({"type": f"pii_{pii_type}", "severity": "HIGH",
+                               "matched": m.group(0)[:50], "pattern": pattern.pattern[:60]})
+                if self._auto_sanitize:
+                    sanitized = sanitized.replace(m.group(0), replacement)
+
+        if self._auto_sanitize and issues:
+            sanitized = self._llm_sanitize_output(sanitized, issues)
+
         return OutputGuardrailResult(
-            passed=passed,
-            sanitized=not passed and self._auto_sanitize,
+            passed=len(issues) == 0,
+            sanitized=bool(issues) and self._auto_sanitize,
             issues=issues,
             sanitized_text=sanitized if self._auto_sanitize else text,
         )
 
 
-# 全局单例
+# ====================================================================== #
+#  完整安全扫描
+# ====================================================================== #
+
+def run_full_security_scan(input_text: str, output_text: str = "") -> List[SecurityFinding]:
+    """运行完整安全扫描，返回所有安全发现。覆盖 OWASP LLM Top 10 主要风险。"""
+    findings: List[SecurityFinding] = []
+    input_guard = InputGuardrail()
+    input_result = input_guard.check(input_text)
+    if not input_result.passed:
+        findings.append(SecurityFinding(
+            severity=SecuritySeverity.HIGH, category="prompt_injection",
+            description=input_result.reason, remediation="拒绝或改写注入输入",
+            matched_text=input_result.details.get("matched", "")[:100],
+            pattern=input_result.matched_pattern,
+        ))
+    findings.extend(input_guard._detect_prompt_injection_advanced(input_text))
+
+    if output_text:
+        output_guard = OutputGuardrail(auto_sanitize=False)
+        output_result = output_guard.check(output_text)
+        for issue in output_result.issues:
+            findings.append(SecurityFinding(
+                severity=SecuritySeverity.get(issue.get("severity", "MEDIUM"), SecuritySeverity.MEDIUM),
+                category=issue.get("type", "unknown"),
+                description=f"输出检测到敏感内容: {issue.get('matched', '')[:60]}",
+                remediation="对敏感内容进行脱敏或过滤",
+                matched_text=issue.get("matched", ""), pattern=issue.get("pattern", ""),
+            ))
+        for pii_type, pattern, _ in _PII_CHECKS:
+            m = pattern.search(output_text)
+            if m:
+                findings.append(SecurityFinding(
+                    severity=SecuritySeverity.HIGH, category=f"pii_leak_{pii_type}",
+                    description=f"输出中发现 PII: {pii_type}",
+                    remediation="对 PII 进行掩码或移除",
+                    matched_text=m.group(0)[:80], pattern=pattern.pattern[:80],
+                ))
+    return findings
+
+
 input_guardrail = InputGuardrail()
 output_guardrail = OutputGuardrail()
 
 __all__ = [
-    "InputGuardrail",
-    "InputGuardrailResult",
-    "OutputGuardrail",
-    "OutputGuardrailResult",
-    "input_guardrail",
-    "output_guardrail",
+    "InputGuardrail", "InputGuardrailResult",
+    "OutputGuardrail", "OutputGuardrailResult",
+    "SecuritySeverity", "SecurityFinding",
+    "run_full_security_scan", "input_guardrail", "output_guardrail",
 ]

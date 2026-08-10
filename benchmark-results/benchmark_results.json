@@ -1,0 +1,508 @@
+{
+  "started_at": "2026-08-09T12:02:53.504965",
+  "completed_at": "2026-08-09T12:10:14.952271",
+  "config": {
+    "dry_run": true,
+    "quick": true,
+    "iterations": 3,
+    "python_version": "3.11.1",
+    "llm_model": "",
+    "command": "scripts\\benchmark.py --dry-run --quick --output-dir ."
+  },
+  "provenance": {
+    "mode": "dry-run",
+    "llm_model": "",
+    "statement": "DRY-RUN benchmark: no LLM API was called; these numbers measure local pipeline mechanics only and must not be presented as model quality.",
+    "command": "scripts\\benchmark.py --dry-run --quick --output-dir ."
+  },
+  "categories": {
+    "pipeline_speed": [
+      {
+        "name": "e2e_pipeline_linear",
+        "stats": {
+          "n": 3,
+          "min_ms": 1152.171,
+          "max_ms": 1454.248,
+          "avg_ms": 1313.656,
+          "p50_ms": 1152.171,
+          "p95_ms": 1334.55,
+          "p99_ms": 1334.55
+        },
+        "metadata": {}
+      },
+      {
+        "name": "stream_pipeline_e2e",
+        "stats": {
+          "n": 3,
+          "min_ms": 12849.563,
+          "max_ms": 13022.351,
+          "avg_ms": 12935.467,
+          "p50_ms": 12849.563,
+          "p95_ms": 12934.485,
+          "p99_ms": 12934.485
+        },
+        "metadata": {}
+      },
+      {
+        "name": "stage_requirement",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.881,
+          "max_ms": 1.144,
+          "avg_ms": 1.014,
+          "p50_ms": 0.881,
+          "p95_ms": 1.017,
+          "p99_ms": 1.017
+        },
+        "metadata": {}
+      },
+      {
+        "name": "stage_code_gen",
+        "stats": {
+          "n": 3,
+          "min_ms": 26688.479,
+          "max_ms": 33553.297,
+          "avg_ms": 29472.257,
+          "p50_ms": 26688.479,
+          "p95_ms": 28174.994,
+          "p99_ms": 28174.994
+        },
+        "metadata": {}
+      },
+      {
+        "name": "stage_review",
+        "stats": {
+          "n": 3,
+          "min_ms": 1431.248,
+          "max_ms": 1619.292,
+          "avg_ms": 1548.544,
+          "p50_ms": 1431.248,
+          "p95_ms": 1595.092,
+          "p99_ms": 1595.092
+        },
+        "metadata": {}
+      },
+      {
+        "name": "stage_test_gen",
+        "stats": {
+          "n": 3,
+          "min_ms": 734.314,
+          "max_ms": 762.682,
+          "avg_ms": 751.404,
+          "p50_ms": 734.314,
+          "p95_ms": 757.216,
+          "p99_ms": 757.216
+        },
+        "metadata": {}
+      }
+    ],
+    "token_consumption": [
+      {
+        "name": "token_baseline_lru",
+        "stats": {
+          "n": 3,
+          "min_ms": 1040.875,
+          "max_ms": 1357.342,
+          "avg_ms": 1222.893,
+          "p50_ms": 1040.875,
+          "p95_ms": 1270.461,
+          "p99_ms": 1270.461
+        },
+        "metadata": {}
+      },
+      {
+        "name": "token_baseline_rate",
+        "stats": {
+          "n": 3,
+          "min_ms": 1238.453,
+          "max_ms": 1548.077,
+          "avg_ms": 1359.889,
+          "p50_ms": 1238.453,
+          "p95_ms": 1293.138,
+          "p99_ms": 1293.138
+        },
+        "metadata": {}
+      },
+      {
+        "name": "token_baseline_csv",
+        "stats": {
+          "n": 3,
+          "min_ms": 1174.196,
+          "max_ms": 1412.796,
+          "avg_ms": 1311.062,
+          "p50_ms": 1174.196,
+          "p95_ms": 1346.193,
+          "p99_ms": 1346.193
+        },
+        "metadata": {}
+      }
+    ],
+    "memory_system": [
+      {
+        "name": "search_latency",
+        "stats": {
+          "n": 3,
+          "min_ms": 110.09,
+          "max_ms": 117.983,
+          "avg_ms": 114.851,
+          "p50_ms": 110.09,
+          "p95_ms": 116.48,
+          "p99_ms": 116.48
+        },
+        "metadata": {}
+      },
+      {
+        "name": "unified_search_latency",
+        "stats": {
+          "n": 3,
+          "min_ms": 109.29,
+          "max_ms": 148.899,
+          "avg_ms": 124.087,
+          "p50_ms": 109.29,
+          "p95_ms": 114.071,
+          "p99_ms": 114.071
+        },
+        "metadata": {}
+      },
+      {
+        "name": "write_episodic_latency",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.088,
+          "max_ms": 0.213,
+          "avg_ms": 0.138,
+          "p50_ms": 0.088,
+          "p95_ms": 0.111,
+          "p99_ms": 0.111
+        },
+        "metadata": {}
+      },
+      {
+        "name": "consolidation_speed",
+        "stats": {
+          "n": 3,
+          "min_ms": 1267.637,
+          "max_ms": 1312.931,
+          "avg_ms": 1285.641,
+          "p50_ms": 1267.637,
+          "p95_ms": 1276.356,
+          "p99_ms": 1276.356
+        },
+        "metadata": {}
+      },
+      {
+        "name": "hit_rate_normalized",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.0,
+          "max_ms": 0.0,
+          "avg_ms": 0.0,
+          "p50_ms": 0.0,
+          "p95_ms": 0.0,
+          "p99_ms": 0.0
+        },
+        "metadata": {}
+      },
+      {
+        "name": "working_memory_100_rw",
+        "stats": {
+          "n": 3,
+          "min_ms": 7.475,
+          "max_ms": 16.85,
+          "avg_ms": 10.863,
+          "p50_ms": 7.475,
+          "p95_ms": 8.266,
+          "p99_ms": 8.266
+        },
+        "metadata": {}
+      }
+    ],
+    "review_quality": [
+      {
+        "name": "static_analysis_speed",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.106,
+          "max_ms": 0.121,
+          "avg_ms": 0.113,
+          "p50_ms": 0.106,
+          "p95_ms": 0.111,
+          "p99_ms": 0.111
+        },
+        "metadata": {}
+      },
+      {
+        "name": "security_scan_speed",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.075,
+          "max_ms": 0.084,
+          "avg_ms": 0.079,
+          "p50_ms": 0.075,
+          "p95_ms": 0.078,
+          "p99_ms": 0.078
+        },
+        "metadata": {}
+      },
+      {
+        "name": "llm_review_speed",
+        "stats": {
+          "n": 3,
+          "min_ms": 3757.162,
+          "max_ms": 4339.506,
+          "avg_ms": 4073.558,
+          "p50_ms": 3757.162,
+          "p95_ms": 4124.006,
+          "p99_ms": 4124.006
+        },
+        "metadata": {}
+      },
+      {
+        "name": "issue_detection_rate",
+        "stats": {
+          "n": 3,
+          "min_ms": 1000.0,
+          "max_ms": 1000.0,
+          "avg_ms": 1000.0,
+          "p50_ms": 1000.0,
+          "p95_ms": 1000.0,
+          "p99_ms": 1000.0
+        },
+        "metadata": {
+          "expected": "eval+os.system"
+        }
+      }
+    ],
+    "code_generation": [
+      {
+        "name": "gen_speed_hello",
+        "stats": {
+          "n": 3,
+          "min_ms": 6298.717,
+          "max_ms": 6875.688,
+          "avg_ms": 6639.931,
+          "p50_ms": 6298.717,
+          "p95_ms": 6745.388,
+          "p99_ms": 6745.388
+        },
+        "metadata": {}
+      },
+      {
+        "name": "gen_speed_fib",
+        "stats": {
+          "n": 3,
+          "min_ms": 9576.119,
+          "max_ms": 10497.917,
+          "avg_ms": 9988.172,
+          "p50_ms": 9576.119,
+          "p95_ms": 9890.481,
+          "p99_ms": 9890.481
+        },
+        "metadata": {}
+      },
+      {
+        "name": "parse_rate_normalized",
+        "stats": {
+          "n": 3,
+          "min_ms": 1000.0,
+          "max_ms": 1000.0,
+          "avg_ms": 1000.0,
+          "p50_ms": 1000.0,
+          "p95_ms": 1000.0,
+          "p99_ms": 1000.0
+        },
+        "metadata": {}
+      },
+      {
+        "name": "validation_pass_rate",
+        "stats": {
+          "n": 3,
+          "min_ms": 1000.0,
+          "max_ms": 1000.0,
+          "avg_ms": 1000.0,
+          "p50_ms": 1000.0,
+          "p95_ms": 1000.0,
+          "p99_ms": 1000.0
+        },
+        "metadata": {}
+      }
+    ],
+    "tool_execution": [
+      {
+        "name": "list_tools_latency",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.001,
+          "max_ms": 0.001,
+          "avg_ms": 0.001,
+          "p50_ms": 0.001,
+          "p95_ms": 0.001,
+          "p99_ms": 0.001
+        },
+        "metadata": {}
+      },
+      {
+        "name": "register_tool_latency",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.257,
+          "max_ms": 0.281,
+          "avg_ms": 0.266,
+          "p50_ms": 0.257,
+          "p95_ms": 0.261,
+          "p99_ms": 0.261
+        },
+        "metadata": {}
+      },
+      {
+        "name": "execute_tool_no_approval",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.02,
+          "max_ms": 0.039,
+          "avg_ms": 0.028,
+          "p50_ms": 0.02,
+          "p95_ms": 0.024,
+          "p99_ms": 0.024
+        },
+        "metadata": {}
+      },
+      {
+        "name": "ast_validate_tool_latency",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.078,
+          "max_ms": 0.085,
+          "avg_ms": 0.081,
+          "p50_ms": 0.078,
+          "p95_ms": 0.081,
+          "p99_ms": 0.081
+        },
+        "metadata": {}
+      },
+      {
+        "name": "code_executor_latency",
+        "stats": {
+          "n": 0
+        },
+        "metadata": {}
+      }
+    ],
+    "audit_throughput": [
+      {
+        "name": "log_single_entry",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.249,
+          "max_ms": 0.364,
+          "avg_ms": 0.314,
+          "p50_ms": 0.249,
+          "p95_ms": 0.328,
+          "p99_ms": 0.328
+        },
+        "metadata": {}
+      },
+      {
+        "name": "log_100_entries_batch",
+        "stats": {
+          "n": 3,
+          "min_ms": 16.206,
+          "max_ms": 21.194,
+          "avg_ms": 17.993,
+          "p50_ms": 16.206,
+          "p95_ms": 16.578,
+          "p99_ms": 16.578
+        },
+        "metadata": {}
+      },
+      {
+        "name": "query_and_count_audit",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.011,
+          "max_ms": 0.017,
+          "avg_ms": 0.014,
+          "p50_ms": 0.011,
+          "p95_ms": 0.012,
+          "p99_ms": 0.012
+        },
+        "metadata": {}
+      }
+    ],
+    "security_scan": [
+      {
+        "name": "injection_detection_5_payloads",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.084,
+          "max_ms": 0.192,
+          "avg_ms": 0.123,
+          "p50_ms": 0.084,
+          "p95_ms": 0.094,
+          "p99_ms": 0.094
+        },
+        "metadata": {}
+      },
+      {
+        "name": "injection_avg_per_payload",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.041,
+          "max_ms": 0.074,
+          "avg_ms": 0.057,
+          "p50_ms": 0.041,
+          "p95_ms": 0.056,
+          "p99_ms": 0.056
+        },
+        "metadata": {}
+      },
+      {
+        "name": "pii_detection_6_payloads",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.052,
+          "max_ms": 0.053,
+          "avg_ms": 0.053,
+          "p50_ms": 0.052,
+          "p95_ms": 0.053,
+          "p99_ms": 0.053
+        },
+        "metadata": {}
+      },
+      {
+        "name": "pii_avg_per_payload",
+        "stats": {
+          "n": 3,
+          "min_ms": 0.009,
+          "max_ms": 0.009,
+          "avg_ms": 0.009,
+          "p50_ms": 0.009,
+          "p95_ms": 0.009,
+          "p99_ms": 0.009
+        },
+        "metadata": {}
+      },
+      {
+        "name": "full_security_scan_combined",
+        "stats": {
+          "n": 0
+        },
+        "metadata": {}
+      }
+    ]
+  },
+  "overall_score": {
+    "categories": {
+      "audit_throughput": 6.107,
+      "code_generation": 4657.026,
+      "memory_system": 255.93,
+      "pipeline_speed": 7670.39,
+      "review_quality": 1268.438,
+      "security_scan": 0.06,
+      "token_consumption": 1297.948,
+      "tool_execution": 0.094
+    },
+    "total_tracked": 8,
+    "grade": "B"
+  }
+}

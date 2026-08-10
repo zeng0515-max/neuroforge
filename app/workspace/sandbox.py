@@ -99,6 +99,20 @@ class SandboxExecutor:
         self, code: str, *, filename: str = "main.py", env: Optional[dict] = None
     ) -> ExecutionResult:
         """Asynchronous execute — primary API."""
+        from app.core.runtime_policy import ActionKind, runtime_policy
+
+        decision = runtime_policy.allow(
+            ActionKind.EXECUTE,
+            actor="sandbox",
+            context={"mode": self.config.mode.value, "filename": filename, "bytes": len(code)},
+        )
+        if not decision.allowed:
+            return ExecutionResult(
+                success=False,
+                error=f"Sandbox execution blocked by policy: {decision.reason}",
+                sandbox_id=_sandbox_id(),
+            )
+
         if self.config.mode == SandboxMode.DOCKER:
             return await self._docker_execute(code, filename, env)
         return await self._local_execute(code, filename, env)

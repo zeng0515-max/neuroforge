@@ -201,8 +201,8 @@ def test_switch_model_for_code_updates_code_model() -> None:
     adapter.dry_run = True
     adapter._main = None
     adapter._code = None
-    adapter.switch_model("deepseek-v3", for_code=True)
-    assert adapter.current_code_model == "deepseek-v3"
+    adapter.switch_model("deepseek-chat", for_code=True)
+    assert adapter.current_code_model == "deepseek-chat"
 
 
 # ------------------------------------------------------------------ #

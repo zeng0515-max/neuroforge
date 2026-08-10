@@ -1,8 +1,37 @@
 [project]
 name = "multi-agent-code-system"
-version = "0.1.0"
-description = "多智能体协同代码生成与审查系统"
+version = "3.0.0"
+description = "多智能体协同代码生成与审查系统 / Multi-Agent Collaborative Code Generation & Review System"
+readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.10"
+authors = [
+    {name = "NeuroForge Team", email = "team@neuroforge.dev"},
+]
+keywords = [
+    "multi-agent",
+    "code-generation",
+    "code-review",
+    "langgraph",
+    "fastapi",
+    "rag",
+    "mcp",
+    "neuroforge",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+]
+urls = {Homepage = "https://github.com/zeng0515-max/neuroforge", Documentation = "https://github.com/zeng0515-max/neuroforge#readme", Repository = "https://github.com/zeng0515-max/neuroforge", "Bug Tracker" = "https://github.com/zeng0515-max/neuroforge/issues"}
 dependencies = [
     "fastapi>=0.115.6",
     "uvicorn>=0.34.0",
@@ -12,6 +41,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "SQLAlchemy>=2.0.36",
     "chromadb>=0.5.23",
+    "posthog>=2.4.0,<4.0.0",
     "openai>=1.109.1",
     "langchain>=0.3.14",
     "langchain-core>=0.3.31",
@@ -29,6 +59,17 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
     "ruff>=0.6.0",
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.0",
+    "pytest-env>=1.0.0",
+]
+build = [
+    "build>=1.2.0",
+    "twine>=6.0.0",
+]
+prod = [
+    "gunicorn>=23.0.0",
+    "uvicorn>=0.34.0",
 ]
 
 [project.scripts]
@@ -78,7 +119,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"app/*" = ["F821"]  # app/api/v1/tasks.py 有 llm 未 import 的已知问题，本任务不修业务代码
 "tests/*" = ["F401", "F811"]
 "app/schemas/*" = ["F401"]
 

@@ -90,7 +90,11 @@ class ReviewIssue(BaseModel):
 
     @property
     def severity_label(self) -> str:
-        return str(self.severity).lower()
+        return (
+            self.severity.value
+            if hasattr(self.severity, "value")
+            else str(self.severity).lower()
+        )
 
 
 class ReviewReport(BaseModel):
@@ -111,11 +115,13 @@ class ReviewReport(BaseModel):
     @property
     def critical_errors(self) -> List[ReviewIssue]:
         sev_set = {"error", "critical", ReviewSeverity.CRITICAL.value, ReviewSeverity.HIGH.value}
-        return [i for i in self.issues if str(i.severity).lower() in sev_set]
+        return [i for i in self.issues if i.severity_label in sev_set]
 
 
 class TestReport(BaseModel):
     """测试生成与执行报告。支持 old（test_files + total_tests）与 new（status + test_cases + run_command）双字段。"""
+
+    __test__ = False  # 防止 pytest 把业务模型误当作测试类收集
 
     status: TestStatus = TestStatus.NOT_RUN
     summary: str = ""

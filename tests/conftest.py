@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.models import Base
+from app.core.config import settings
 
 
 # ====================================================================== #
@@ -39,6 +40,17 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["CHROMA_PERSIST_DIR"] = str(Path(tempfile.gettempdir()) / "mac_test_chroma")
     os.environ["ENABLE_TEST_GEN"] = "true"
     os.environ["APP_ENV"] = "test"
+
+    # conftest 顶部已触发 settings 创建，env 覆盖不会自动同步到旧实例，
+    # 这里直接改对象，保证测试期间不读 .env 中的真实密钥/模型配置。
+    settings.app.env = "test"
+    settings.llm.api_key = ""
+    settings.code_llm.api_key = ""
+    settings.chroma.embedding_model = "hash"
+    settings.db.path = str(Path(tempfile.gettempdir()) / "mac_test_app.db")
+    settings.chroma.persist_dir = str(Path(tempfile.gettempdir()) / "mac_test_chroma")
+    settings.tracing.enabled = False
+    settings.semantic_cache.enabled = False
 
     # 直接把全局 llm 单例打到 DryRun，避免已初始化的真实 client 被测试触发
     try:
@@ -136,3 +148,137 @@ def mock_llm_achat() -> Generator[AsyncMock, None, None]:
         model="mock-model",
     )
     yield mock
+
+
+# ====================================================================== #
+#  编排引擎 fixtures
+# ====================================================================== #
+
+
+@pytest.fixture(scope="function")
+def task_graph():
+    """空 TaskGraph 实例。"""
+    from app.graph.orchestrator import TaskGraph
+    return TaskGraph()
+
+
+@pytest.fixture(scope="function")
+def linear_task_graph():
+    """线性链路任务图: a→b→c→d。"""
+    from app.graph.orchestrator import AgentTask, TaskGraph
+    g = TaskGraph()
+    g.add_task("a", AgentTask(task_id="a", agent_type="requirement"))
+    g.add_task("b", AgentTask(task_id="b", agent_type="code_gen", dependencies=["a"]))
+    g.add_task("c", AgentTask(task_id="c", agent_type="review", dependencies=["b"]))
+    g.add_task("d", AgentTask(task_id="d", agent_type="test_gen", dependencies=["c"]))
+    return g
+
+
+@pytest.fixture(scope="function")
+def parallel_task_graph():
+    """并行任务图: a→(b,c)→d。"""
+    from app.graph.orchestrator import AgentTask, TaskGraph
+    g = TaskGraph()
+    g.add_task("a", AgentTask(task_id="a", agent_type="requirement"))
+    g.add_task("b", AgentTask(task_id="b", agent_type="code_gen", dependencies=["a"]))
+    g.add_task("c", AgentTask(task_id="c", agent_type="code_gen", dependencies=["a"]))
+    g.add_task("d", AgentTask(task_id="d", agent_type="test_gen", dependencies=["b", "c"]))
+    return g
+
+
+@pytest.fixture(scope="function")
+def orchestrator():
+    """Orchestrator 实例。"""
+    from app.graph.orchestrator import Orchestrator
+    return Orchestrator()
+
+
+# ====================================================================== #
+#  记忆系统 fixtures
+# ====================================================================== #
+
+
+@pytest.fixture(scope="function")
+def working_memory():
+    """独立 WorkingMemory 实例。"""
+    from app.core.memory_system import WorkingMemory
+    return WorkingMemory(capacity=50)
+
+
+@pytest.fixture(scope="function")
+def episodic_memory():
+    """独立 EpisodicMemory 实例。"""
+    from app.core.memory_system import EpisodicMemory
+    return EpisodicMemory(max_events=100)
+
+
+@pytest.fixture(scope="function")
+def memory_facade():
+    """独立 MemoryFacade 实例（三层记忆）。"""
+    from app.core.memory_system import MemoryFacade
+    return MemoryFacade(working_capacity=50, episodic_max=100)
+
+
+# ====================================================================== #
+#  Agent 协议 fixtures
+# ====================================================================== #
+
+
+@pytest.fixture(scope="function")
+def agent_protocol():
+    """已注册标准 Agent 的 AgentInteractionProtocol。"""
+    from app.agents.agent_protocol import (
+        AgentCapability,
+        AgentInteractionProtocol,
+        AgentProfile,
+        AgentRole,
+    )
+    proto = AgentInteractionProtocol()
+    proto.register_agent(AgentProfile(
+        name="coder", role=AgentRole.CODER,
+        capabilities=[AgentCapability.CODE_GENERATION],
+    ))
+    proto.register_agent(AgentProfile(
+        name="reviewer", role=AgentRole.REVIEWER,
+        capabilities=[AgentCapability.CODE_REVIEW],
+    ))
+    proto.register_agent(AgentProfile(
+        name="tester", role=AgentRole.TESTER,
+        capabilities=[AgentCapability.TESTING],
+    ))
+    proto.register_agent(AgentProfile(
+        name="architect", role=AgentRole.ARCHITECT,
+        capabilities=[AgentCapability.PLANNING, AgentCapability.ANALYSIS],
+    ))
+    return proto
+
+
+# ====================================================================== #
+#  任务拆解 fixtures
+# ====================================================================== #
+
+
+@pytest.fixture(scope="function")
+def task_decomposer():
+    """TaskDecomposer 实例。"""
+    from app.graph.task_decomposer import TaskDecomposer
+    return TaskDecomposer()
+
+
+@pytest.fixture(scope="function")
+def decision_engine():
+    """DecisionEngine 实例。"""
+    from app.graph.task_decomposer import DecisionEngine
+    return DecisionEngine()
+
+
+# ====================================================================== #
+#  统一编排 fixtures
+# ====================================================================== #
+
+
+@pytest.fixture(scope="function")
+def unified_orchestrator():
+    """UnifiedOrchestrator 实例。"""
+    from app.unified_orchestrator import UnifiedOrchestrator
+    return UnifiedOrchestrator()

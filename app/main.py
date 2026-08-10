@@ -1,12 +1,19 @@
 """FastAPI 应用入口（文档 6.2 第 6 步：uvicorn app.main:app）。
 
 职责：
-- 挂载所有路由（任务 / 健康检查 / 知识库 / 工具）
+- 挂载所有路由（任务 / 健康检查 / 知识库 / 工具 / 多智能体）
 - 配置 CORS / 日志 / 全局异常兜底
 - 启动时预热单例（db / llm / rag），失败不阻断启动
+- 初始化新版统一编排引擎（unified_orchestrator + agent_pool），降级不影响旧架构
+
+新旧架构关系：
+- 旧架构：app.graph.pipeline（Pipeline 状态机，tasks/execute 路由使用）
+- 新架构：app.unified_orchestrator（统一编排门面，agents 路由使用）
+- 两套架构并存，通过 API Key 统一鉴权
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -17,21 +24,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.v1.agents import router as agents_router
 from app.api.v1.eval import router as eval_router
 from app.api.v1.execute import router as execute_router
+from app.api.v1.jobs import router as jobs_router
 from app.api.v1.misc import router as misc_router
+from app.api.v1.pipeline import router as pipeline_router
 from app.api.v1.skills import router as skills_router
+from app.api.v1.slo import router as slo_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.websocket import router as ws_router
 from app.core.auth import verify_api_key
 from app.core.config import settings
+
+# ====================================================================== #
+#  新版架构降级导入 —— 导入失败不影响原有功能
+# ====================================================================== #
+try:
+    from app.unified_orchestrator import unified_orchestrator as _unified_orchestrator
+    _HAS_UNIFIED_ORCHESTRATOR = True
+except Exception as _e:
+    _unified_orchestrator = None
+    _HAS_UNIFIED_ORCHESTRATOR = False
+    logging.getLogger(__name__).warning(
+        "统一编排引擎导入失败（不影响旧架构）：%s", _e
+    )
+
+try:
+    from app.agent_executor import AgentPool as _AgentPool
+    _HAS_AGENT_POOL = True
+except Exception as _e:
+    _AgentPool = None
+    _HAS_AGENT_POOL = False
+    logging.getLogger(__name__).warning(
+        "智能体池导入失败（不影响旧架构）：%s", _e
+    )
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时预热核心单例。"""
+    """应用生命周期：启动时预热核心单例，初始化新旧双架构。"""
     from app.core.logging_config import setup_logging
     setup_logging(settings.app.log_level)
 
@@ -101,10 +135,66 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("可观测性初始化失败（不影响主流程）：%s", e)
 
+    # 新版架构：初始化统一编排引擎（优雅降级，不影响旧架构）
+    try:
+        if _HAS_UNIFIED_ORCHESTRATOR and _unified_orchestrator is not None:
+            app.state.unified_orchestrator = _unified_orchestrator
+            status = _unified_orchestrator.get_system_status()
+            logger.info(
+                "新版编排引擎就绪：version=0.1.0, mode=%s, agents=%d",
+                status.engine, len(status.agents),
+            )
+        else:
+            app.state.unified_orchestrator = None
+            logger.warning("新版编排引擎未启用（导入失败），旧架构仍可正常使用")
+    except Exception as e:
+        app.state.unified_orchestrator = None
+        logger.warning("新版编排引擎初始化失败（不影响旧架构）：%s", e)
+
+    # 新版架构：初始化智能体池（独立于 unified_orchestrator 供路由直接使用）
+    try:
+        if _HAS_AGENT_POOL and _AgentPool is not None:
+            _pool = _AgentPool()
+            from app.agent_executor import (
+                ArchitectExecutor,
+                CoderExecutor,
+                OrchestratorExecutor,
+                ReviewerExecutor,
+                TesterExecutor,
+            )
+            _pool.register(ArchitectExecutor())
+            _pool.register(CoderExecutor())
+            _pool.register(ReviewerExecutor())
+            _pool.register(TesterExecutor())
+            _pool.register(OrchestratorExecutor())
+            app.state.agent_pool = _pool
+            logger.info("智能体池已就绪：count=%d", _pool.count)
+        else:
+            app.state.agent_pool = None
+            logger.warning("智能体池未启用（导入失败），旧架构仍可正常使用")
+    except Exception as e:
+        app.state.agent_pool = None
+        logger.warning("智能体池初始化失败（不影响旧架构）：%s", e)
+
     yield
 
     # Bug P4 修复：应用关闭时释放核心资源，避免长期运行后连接/句柄泄漏
     logger.info("应用关闭，开始释放资源...")
+
+    # 0. 释放新版架构资源
+    try:
+        _orch = getattr(app.state, "unified_orchestrator", None)
+        if _orch is not None:
+            logger.info("新版编排引擎已关闭")
+    except Exception as e:
+        logger.warning("关闭新版编排引擎时出错：%s", e)
+
+    try:
+        _pool = getattr(app.state, "agent_pool", None)
+        if _pool is not None:
+            logger.info("智能体池已关闭")
+    except Exception as e:
+        logger.warning("关闭智能体池时出错：%s", e)
 
     # 1. 取消仍在运行的后台任务，避免事件循环关闭时产生 warning
     try:
@@ -112,6 +202,11 @@ async def lifespan(app: FastAPI):
         for task in list(_background_tasks):
             if not task.done():
                 task.cancel()
+        for task in list(_background_tasks):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         _background_tasks.clear()
     except Exception as e:
         logger.warning("取消后台任务时出错：%s", e)
@@ -205,12 +300,18 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # 挂载路由
 # 所有业务路由统一加 API Key 鉴权依赖；/api/v1/health 在 verify_api_key 内部白名单放行
+# 旧架构路由：tasks / skills / execute / eval（基于 app.graph.pipeline）
+# 新架构路由：agents（基于 app.unified_orchestrator + AgentExecutor 执行层）
 _auth_deps = [Depends(verify_api_key)]
 app.include_router(tasks_router, dependencies=_auth_deps)
 app.include_router(skills_router, dependencies=_auth_deps)
 app.include_router(execute_router, dependencies=_auth_deps)
 app.include_router(misc_router, dependencies=_auth_deps)
 app.include_router(eval_router, dependencies=_auth_deps)
+app.include_router(agents_router, dependencies=_auth_deps)
+app.include_router(jobs_router, dependencies=_auth_deps)
+app.include_router(pipeline_router, dependencies=_auth_deps)
+app.include_router(slo_router, dependencies=_auth_deps)
 app.include_router(ws_router, prefix="/api/v1")
 
 # 挂载前端静态页面
@@ -223,7 +324,7 @@ if _web_dir.exists():
 async def root():
     """根路径：直接跳转到前端页面（301 永久重定向，避免浏览器缓存错误）。"""
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/web/", status_code=301)
+    return RedirectResponse(url="/web/", status_code=302)
 
 
 def main():

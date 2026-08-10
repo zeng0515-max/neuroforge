@@ -1,0 +1,109 @@
+{
+  "total": 8,
+  "passed": 8,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "gate": "PASS",
+  "mode": "live",
+  "model": "deepseek-chat",
+  "command": "scripts\\golden_eval.py --live --output-dir benchmark-results",
+  "generated_at": "2026-08-09T05:05:37.499510+00:00",
+  "results": [
+    {
+      "case_id": "lru_cache",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "rate_limiter",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "csv_parser",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "thread_safe_counter",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "simple_queue",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "fizzbuzz",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "fibonacci",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    },
+    {
+      "case_id": "data_cleaner",
+      "passed": true,
+      "checks": {
+        "min_files": true,
+        "min_lines": true,
+        "syntax": true,
+        "expected_symbols": true,
+        "expected_keywords": true
+      },
+      "reason": "all deterministic checks passed"
+    }
+  ]
+}

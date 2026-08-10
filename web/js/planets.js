@@ -80,10 +80,11 @@ export function initAPlusPlanet() {
     uModelMat:      { value: new THREE.Matrix4() },
     uCamPos:        { value: new THREE.Vector3() },
   };
+  const _PREC = `precision highp float;\n`;
   const planetMat = new THREE.ShaderMaterial({
     uniforms: planetUniforms,
-    vertexShader: GLSL_NOISE + APLUS_PLANET_VS,
-    fragmentShader: GLSL_NOISE + `float fbm(vec3 p){float a=0.5;float r=0.0;for(int i=0;i<4;i++){r+=a*snoise(p);p*=2.02;a*=0.5;}return r;}` + APLUS_PLANET_FS,
+    vertexShader: _PREC + GLSL_NOISE + APLUS_PLANET_VS,
+    fragmentShader: _PREC + GLSL_NOISE + `float fbm(vec3 p){float a=0.5;float r=0.0;for(int i=0;i<4;i++){r+=a*snoise(p);p*=2.02;a*=0.5;}return r;}` + APLUS_PLANET_FS,
     depthWrite: true,
     depthTest: true,
   });
@@ -245,7 +246,7 @@ export function initAPlusSatellites() {
       uniforms:{ uTint:{value:new THREE.Color(cfg.c).convertSRGBToLinear()} },
       vertexShader: `attribute float aAlpha; varying float vA; varying vec3 vCol;
         void main(){ vA=aAlpha; vCol=color; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_Position=projectionMatrix*mv; }`,
-      fragmentShader:`varying float vA; varying vec3 vCol; uniform vec3 uTint;
+      fragmentShader:`precision highp float; varying float vA; varying vec3 vCol; uniform vec3 uTint;
         void main(){ vec3 c = mix(vCol, uTint, 0.5); gl_FragColor=vec4(c, vA); }`,
       vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
     });
@@ -320,7 +321,7 @@ export function initAPlusScienceLayers() {
       uColorC:{value:new THREE.Color(0xFBBF24)},
     },
     vertexShader: QUANTUM_VS,
-    fragmentShader: Q_NOISE + QUANTUM_FS,
+    fragmentShader: `precision highp float;\n` + Q_NOISE + QUANTUM_FS,
     transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.FrontSide,
   });

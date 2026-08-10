@@ -149,9 +149,70 @@ class StageLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
 
 
+class QueueTask(Base):
+    """Durable job queue row used by the background worker.
+
+    Kept separate from :class:`TaskRecord` so the task lifecycle (queued,
+    running, retry, failed) is observable without blocking pipeline reads.
+    """
+
+    __tablename__ = "task_queue"
+    __table_args__ = (
+        Index("ix_queue_status_priority", "queue_status", "priority"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    queue_status: Mapped[str] = mapped_column(
+        String(16), default="queued", index=True, nullable=False,
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+    payload_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    worker_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    lock_token: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now, index=True,
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # ------------------------------------------------------------------ #
+    #  JSON helpers
+    # ------------------------------------------------------------------ #
+    @property
+    def payload(self) -> Dict[str, Any]:
+        try:
+            return json.loads(self.payload_json) if self.payload_json else {}
+        except Exception:
+            return {}
+
+    @payload.setter
+    def payload(self, value: Dict[str, Any]) -> None:
+        self.payload_json = json.dumps(value, ensure_ascii=False)
+
+    @property
+    def result(self) -> Dict[str, Any]:
+        try:
+            return json.loads(self.result_json) if self.result_json else {}
+        except Exception:
+            return {}
+
+    @result.setter
+    def result(self, value: Dict[str, Any]) -> None:
+        self.result_json = json.dumps(value, ensure_ascii=False)
+
+
 __all__ = [
     "Base",
     "TaskRecord",
     "FileRecord",
     "StageLog",
+    "QueueTask",
 ]

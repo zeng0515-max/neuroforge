@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -19,12 +20,47 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 try:
-    import chromadb
-    from chromadb.config import Settings as ChromaSettings
-    _CHROMA_AVAILABLE = True
+    import os as _os
+    _CHROMA_DISABLED = _os.environ.get("CHROMA_DISABLED", "").lower() in ("1", "true", "yes")
+    if not _CHROMA_DISABLED:
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+        _CHROMA_AVAILABLE = True
+    else:
+        _CHROMA_AVAILABLE = False
+        ChromaSettings = None
 except ImportError:
     _CHROMA_AVAILABLE = False
     ChromaSettings = None  # type: ignore
+
+
+class _HashEmbeddingFunction:
+    """Deterministic local embedding used by the semantic cache.
+
+    ChromaDB's default embedding function tries to download an ONNX model on
+    first query, which can block behind a restricted network. A hash-based
+    vector keeps the cache fully offline while still allowing approximate
+    similarity matching for near-duplicate prompts.
+    """
+
+    def __init__(self, dim: int = 768) -> None:
+        self._dim = max(16, int(dim))
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for doc in input:
+            vec = [0.0] * self._dim
+            for token in str(doc).lower().split():
+                digest = hashlib.md5(token.encode("utf-8")).hexdigest()
+                idx = int(digest, 16) % self._dim
+                vec[idx] += 1.0
+            norm = math.sqrt(sum(x * x for x in vec))
+            if norm <= 0:
+                vec[0] = 1.0
+            else:
+                vec = [x / norm for x in vec]
+            vectors.append(vec)
+        return vectors
 
 
 @dataclass
@@ -64,9 +100,13 @@ class SemanticCache:
         self._config = settings.semantic_cache
         self._persist_dir = persist_dir or self._config.collection_name  # use collection name as default
         self._collection_name = collection_name or self._config.collection_name
+        # Keep the offline embedding in its own collection so an existing
+        # collection created with ChromaDB's default embedding never blocks.
+        self._collection_name = f"{self._collection_name}_hash"
         self._threshold = similarity_threshold if similarity_threshold is not None else self._config.similarity_threshold
         self._max_entries = self._config.max_entries
         self._embedding_dim = embedding_dim
+        self._embedding_fn = _HashEmbeddingFunction(dim=self._embedding_dim)
         self._lock = threading.Lock()
         self._collection = None
         self._client = None
@@ -86,7 +126,7 @@ class SemanticCache:
             return
 
         try:
-            persist_dir = str(settings.chroma.persist_dir)
+            persist_dir = str(self._persist_dir)
             self._client = chromadb.PersistentClient(
                 path=persist_dir,
                 settings=ChromaSettings(anonymized_telemetry=False),
@@ -97,6 +137,7 @@ class SemanticCache:
             self._collection = self._client.get_or_create_collection(
                 name=self._collection_name,
                 metadata={"hnsw:space": "cosine"},
+                embedding_function=self._embedding_fn,
             )
             logger.info(
                 "语义缓存集合就绪：%s，条目数：%d",
@@ -160,7 +201,7 @@ class SemanticCache:
                             similarity, self._threshold)
                 # 更新命中计数
                 self._update_hit_count(doc_meta)
-                return documents[i]
+                return doc_meta.get("response") or documents[i]
 
             return None
         except Exception as e:
@@ -200,12 +241,13 @@ class SemanticCache:
 
             metadata = {
                 "model": model,
+                "response": response,
                 "timestamp": str(time.time()),
                 "hit_count": "1",
             }
 
             self._collection.add(
-                documents=[response],
+                documents=[query],
                 metadatas=[metadata],
                 ids=[unique_id],
             )

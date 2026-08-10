@@ -160,3 +160,28 @@ def test_run_records_verify_status(mock_llm_response) -> None:
 
     assert state["status"].verify_attempts == 1
     assert state["status"].verify_healed is True
+
+
+# ------------------------------------------------------------------ #
+#  模块级导出兼容
+# ------------------------------------------------------------------ #
+def test_module_level_build_fix_prompt_export() -> None:
+    """code_gen_agent 应继续导出模块级 _build_fix_prompt，兼容外部调用。"""
+    from app.agents.code_gen_agent import _build_fix_prompt
+    from app.tools.code_executor import ExecResult, FileExecResult
+
+    result = ExecResult(
+        success=False, total_files=1, failed_files=1,
+        results=[FileExecResult(
+            path="main.py", syntax_ok=False,
+            syntax_error="第1行: invalid syntax",
+        )],
+        summary="验证失败：1 个文件有问题",
+    )
+    prompt = _build_fix_prompt(
+        [{"path": "main.py", "content": "def broken(:\n"}],
+        result,
+        "实现求和函数",
+    )
+    assert "实现求和函数" in prompt
+    assert "syntax_error" in prompt

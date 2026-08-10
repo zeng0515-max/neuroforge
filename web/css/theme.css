@@ -1,0 +1,165 @@
+/* ============================================================
+   NeuroForge · Cosmic Anomaly Design System
+   共享主题变量：统一落地页与 Dashboard 的视觉语言
+   ============================================================ */
+
+:root {
+  /* 核心品牌色：青（结构）/ 品红（能量）/ 金（焦点） */
+  --cyan: #06B6D4;
+  --cyan-200: #22D3EE;
+  --cyan-700: #0E7490;
+  --cyan-soft: rgba(6, 182, 212, 0.12);
+  --cyan-glow: rgba(34, 211, 238, 0.30);
+
+  --magenta: #D946EF;
+  --magenta-200: #E879F9;
+  --magenta-700: #A21CAF;
+  --magenta-soft: rgba(217, 70, 239, 0.12);
+  --magenta-glow: rgba(232, 121, 249, 0.28);
+
+  --gold: #F6C445;
+  --gold-200: #FCD34D;
+  --gold-700: #B45309;
+  --gold-soft: rgba(246, 196, 69, 0.14);
+  --gold-glow: rgba(251, 191, 36, 0.35);
+
+  /* 语义色 */
+  --success: #4ADE80;
+  --success-soft: rgba(74, 222, 128, 0.12);
+  --warning: #FBBF24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --danger: #F87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+
+  /* 背景层级 */
+  --bg-0: #05050c;
+  --bg-1: #0a0a12;
+  --bg-2: #11111c;
+  --surface: #141420;
+  --surface-raised: #1a1a2a;
+  --card: rgba(20, 20, 32, 0.72);
+
+  /* 边框与分隔 */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --divider: rgba(255, 255, 255, 0.06);
+
+  /* 文字层级 */
+  --text: rgba(245, 245, 255, 0.92);
+  --text-dim: rgba(220, 220, 240, 0.64);
+  --text-faint: rgba(180, 180, 200, 0.42);
+  --text-inverse: #0a0a12;
+
+  /* 玻璃与光晕 */
+  --glass: rgba(255, 255, 255, 0.03);
+  --glass-raised: rgba(255, 255, 255, 0.05);
+  --glow-cyan: 0 0 24px var(--cyan-glow);
+  --glow-gold: 0 0 24px var(--gold-glow);
+
+  /* 渐变 */
+  --grad-main: linear-gradient(135deg, var(--cyan) 0%, var(--magenta) 50%, var(--gold) 100%);
+  --grad-pulse: linear-gradient(90deg, var(--cyan), var(--magenta), var(--gold), var(--magenta), var(--cyan));
+  --grad-cyan: linear-gradient(135deg, var(--cyan), var(--cyan-200));
+  --grad-gold: linear-gradient(135deg, var(--gold), var(--gold-200));
+
+  /* 字体 */
+  --font-display: 'Geist', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* 字号 */
+  --text-xs: 0.68rem;
+  --text-sm: 0.78rem;
+  --text-base: 0.88rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.5rem;
+  --text-3xl: clamp(3rem, 8vw, 6.5rem);
+
+  /* 间距（8px 网格） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45);
+
+  /* 动效 */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-expo: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 450ms;
+  --duration-reveal: 600ms;
+
+  /* Z 轴层级 */
+  --z-bg: 0;
+  --z-base: 1;
+  --z-sticky: 100;
+  --z-overlay: 1000;
+  --z-modal: 10000;
+}
+
+/* 简化动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 基础重置 */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-display);
+  color: var(--text);
+  background: var(--bg-0);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.011em;
+}
+
+/* 通用滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--cyan-700); }
+
+/* 聚焦环 */
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+}

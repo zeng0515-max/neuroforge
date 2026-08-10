@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.core.config import read_env_file, settings, update_env_file
 from app.core.llm_adapter import llm
@@ -42,8 +42,32 @@ router = APIRouter(prefix="/api/v1", tags=["misc"])
 #  健康检查
 # ====================================================================== #
 @router.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
-    """健康检查：LLM / RAG / DB 状态自检。"""
+async def health(request: Request) -> HealthResponse:
+    """健康检查：LLM / RAG / DB / 新架构状态自检。"""
+    new_engine_version = ""
+    new_engine_mode = "standalone"
+    agent_count = 0
+    new_engine_available = False
+    orchestrator_status = "unavailable"
+
+    try:
+        from app.unified_orchestrator import unified_orchestrator
+        status = unified_orchestrator.get_system_status()
+        new_engine_version = "0.1.0"
+        new_engine_mode = status.engine
+        agent_count = len(status.agents)
+        new_engine_available = True
+        orchestrator_status = "ready"
+    except Exception:
+        pass
+
+    try:
+        _agent_pool = getattr(request.app.state, "agent_pool", None)
+        if _agent_pool is not None:
+            agent_count = _agent_pool.count
+    except Exception:
+        pass
+
     debug = HealthDebugInfo(
         llm_error=llm.init_error,
         rag_error="",
@@ -51,6 +75,9 @@ async def health() -> HealthResponse:
         llm_model=settings.llm.model,
         code_llm_model=settings.code_llm.model or settings.llm.model,
         app_env=settings.app.env,
+        new_engine_version=new_engine_version,
+        new_engine_mode=new_engine_mode,
+        agent_count=agent_count,
     )
     return HealthResponse(
         status="ok",
@@ -59,6 +86,9 @@ async def health() -> HealthResponse:
         rag_count=rag.count(),
         db_ok=True,
         debug=debug,
+        new_engine_available=new_engine_available,
+        agent_count=agent_count,
+        orchestrator_status=orchestrator_status,
     )
 
 
@@ -179,6 +209,7 @@ def _build_providers() -> List[ProviderConfigOut]:
             ProviderConfigOut(
                 name=provider_name,
                 env_key=env_key,
+                base_url=base_url,
                 key_url=key_url,
                 configured=bool(env_map.get(env_key, "").strip()),
             ),
@@ -199,6 +230,8 @@ async def get_llm_config() -> LLMConfigStatusResponse:
         model=llm.current_model,
         code_model=llm.current_code_model,
         providers=providers,
+        quota_exhausted=llm.quota_exhausted,
+        quota_detail=llm.quota_detail,
     )
 
 
@@ -222,7 +255,8 @@ async def update_llm_config(req: LLMConfigUpdateRequest) -> LLMConfigUpdateRespo
     # 若指定了厂商专用 key，写入对应环境变量
     if req.provider_env_key:
         env_key = req.provider_env_key.strip().upper()
-        if env_key in ("DASHSCOPE_API_KEY", "DEEPSEEK_API_KEY", "ARK_API_KEY", "OPENAI_API_KEY"):
+        allowed_provider_keys = {spec[1] for spec in _PROVIDER_REGISTRY.values()}
+        if env_key in allowed_provider_keys:
             updates[env_key] = api_key
 
     # 1) 写 .env（持久化）

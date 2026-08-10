@@ -192,15 +192,21 @@ class HealthDebugInfo(BaseModel):
     llm_model: str = ""
     code_llm_model: str = ""
     app_env: str = ""
+    new_engine_version: str = ""
+    new_engine_mode: str = "standalone"
+    agent_count: int = 0
 
 
 class HealthResponse(BaseModel):
     status: str = "ok"
-    llm: str = "unknown"  # dry-run / 真实模型名
+    llm: str = "unknown"
     rag_available: bool = False
     rag_count: int = 0
     db_ok: bool = True
     debug: HealthDebugInfo = Field(default_factory=HealthDebugInfo, alias="debug")
+    new_engine_available: bool = False
+    agent_count: int = 0
+    orchestrator_status: str = "unavailable"
 
 
 # ====================================================================== #
@@ -237,6 +243,7 @@ class ProviderConfigOut(BaseModel):
 
     name: str = ""
     env_key: str = ""
+    base_url: str = ""
     key_url: str = ""
     configured: bool = False
     models: List[str] = Field(default_factory=list)
@@ -251,6 +258,8 @@ class LLMConfigStatusResponse(BaseModel):
     model: str = ""
     code_model: str = ""
     providers: List[ProviderConfigOut] = Field(default_factory=list)
+    quota_exhausted: bool = False
+    quota_detail: str = ""
 
 
 class LLMConfigUpdateRequest(BaseModel):

@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, NoReturn, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 try:  # langgraph 是可选依赖，不可用时回退到线性执行器（便于本地冒烟）
     from langgraph.graph import END, StateGraph  # type: ignore
@@ -29,6 +29,7 @@ from app.agents.review_agent import review_node
 from app.agents.test_gen_agent import test_gen_node
 from app.core.config import settings
 from app.core.events import EventType, event_bus
+from app.core.llm_adapter import llm
 from app.db.sqlite_client import db
 from app.graph.state import (
     PipelinePhase,
@@ -526,6 +527,7 @@ def _stream_event(
     progress: int,
     message: str,
     task_id: str = "",
+    error_type: str = "",
 ) -> Dict[str, Any]:
     """构造流式事件数据。"""
     from datetime import datetime
@@ -534,6 +536,7 @@ def _stream_event(
         "progress": progress,
         "message": message,
         "task_id": task_id,
+        "error_type": error_type,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -621,6 +624,12 @@ def stream_pipeline(
                         continue
                     state[k] = v
             events.append(_stream_event("code_gen", 100, "代码生成完成", task_id))
+            if llm.quota_exhausted:
+                events.append(_stream_event(
+                    "code_gen", -1,
+                    "⚠️ API Key 免费额度已用尽，当前为 DryRun 模式。请在右上角更换 API Key。",
+                    task_id, error_type="quota_exhausted",
+                ))
         except Exception as e:
             events.append(_stream_event("code_gen", -1, f"代码生成失败: {e}", task_id))
             raise
@@ -781,6 +790,7 @@ def resume_pipeline(
         return None
 
     try:
+        _pipeline_start = time.monotonic()
         app = build_graph(checkpointer=checkpointer)
         config = {"configurable": {"thread_id": task_id}}
         # 用 None 作为输入，LangGraph 会从 checkpoint 恢复

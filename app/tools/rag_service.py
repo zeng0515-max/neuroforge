@@ -221,7 +221,11 @@ class RAGService:
         try:
             persist_dir = Path(settings.chroma.persist_dir).resolve()
             persist_dir.mkdir(parents=True, exist_ok=True)
-            client = chromadb.PersistentClient(path=str(persist_dir))
+            from chromadb.config import Settings as ChromaSettings
+            client = chromadb.PersistentClient(
+                path=str(persist_dir),
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
 
             # 把 embedding 模型与维度写进 collection metadata，
             # 用于启动时检测维度/模型变化并自动重建（防止维度不匹配导致 query 报错）
@@ -369,6 +373,9 @@ class RAGService:
             return []
         try:
             qvec = self.embedding.embed_query(query_text)
+            if not qvec:
+                logger.warning("RAG query skipped: embedding provider returned empty vector")
+                return []
             results = self._collection.query(  # type: ignore[union-attr]
                 query_embeddings=[qvec],
                 n_results=top_k,

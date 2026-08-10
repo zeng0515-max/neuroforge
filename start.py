@@ -429,14 +429,33 @@ def check_port() -> bool:
 #  步骤 5：启动服务 + 自动开浏览器
 # ------------------------------------------------------------------ #
 def open_browser_later(delay_seconds: float = 2.0) -> None:
-    """延迟打开浏览器，给 uvicorn 启动留时间。"""
+    """健康检查通过后再打开浏览器，确保服务完全就绪。"""
+    import urllib.request
+
     def _open():
-        time.sleep(delay_seconds)
-        try:
-            webbrowser.open(FRONTEND_URL)
-            _ok(f"已打开浏览器：{FRONTEND_URL}")
-        except Exception as e:
-            _err(f"自动打开浏览器失败：{e}，请手动访问 {FRONTEND_URL}")
+        deadline = time.time() + 30.0
+        url = f"http://localhost:{PORT}/api/v1/health"
+        ready = False
+        while time.time() < deadline:
+            try:
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=1.5) as resp:
+                    if resp.status == 200:
+                        ready = True
+                        break
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        if ready:
+            time.sleep(0.5)
+            try:
+                webbrowser.open(FRONTEND_URL)
+                _ok(f"服务就绪，已打开浏览器：{FRONTEND_URL}")
+            except Exception as e:
+                _err(f"自动打开浏览器失败：{e}，请手动访问 {FRONTEND_URL}")
+        else:
+            _err(f"健康检查超时，请手动访问 {FRONTEND_URL}")
 
     t = threading.Thread(target=_open, daemon=True)
     t.start()
@@ -460,8 +479,8 @@ def start_server(python: str, reload: bool = False, open_browser: bool = True, p
     print()
 
     if open_browser:
-        _ok(f"服务启动后 {2.0}s 将自动打开浏览器 ...")
-        open_browser_later(delay_seconds=2.0)
+        _ok("服务就绪后将自动打开浏览器 ...")
+        open_browser_later()
 
     cmd = [python, "-m", "uvicorn", "app.main:app",
            "--host", HOST, "--port", str(port)]

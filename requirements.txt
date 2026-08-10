@@ -13,6 +13,9 @@ SQLAlchemy==2.0.36
 
 # ===== 向量库 =====
 chromadb==0.5.23
+# ChromaDB 0.5.23 仍按旧签名调用 posthog.capture；posthog>=4 会抛
+# "capture() takes 1 positional argument but 3 were given"，这里锁兼容版本
+posthog>=2.4.0,<4.0.0
 
 # ===== LLM / Agent 编排 =====
 openai==1.109.1
