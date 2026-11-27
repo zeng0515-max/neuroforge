@@ -26,7 +26,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Quality Assurance",
@@ -40,14 +39,18 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.0.1",
     "SQLAlchemy>=2.0.36",
-    "chromadb>=0.5.23",
+    # Upper bounds = the majors this code is actually tested against. Without
+    # them a fresh install picks chromadb 1.x (its EmbeddingFunction API
+    # changed) and mcp 2.x (the lowlevel Server decorators were removed), and
+    # CI turned red for reasons unrelated to the change under review.
+    "chromadb>=0.5.23,<0.6.0",
     "posthog>=2.4.0,<4.0.0",
-    "openai>=1.109.1",
-    "langchain>=0.3.14",
-    "langchain-core>=0.3.31",
-    "langchain-openai>=0.2.14",
-    "langgraph>=0.2.62",
-    "mcp>=1.1.0",
+    "openai>=1.109.1,<2.0.0",
+    "langchain>=0.3.14,<0.4.0",
+    "langchain-core>=0.3.31,<0.4.0",
+    "langchain-openai>=0.2.14,<0.3.0",
+    "langgraph>=0.2.62,<0.3.0",
+    "mcp>=1.1.0,<1.2.0",
     "pytest>=8.3.4",
     "langgraph-checkpoint-sqlite<3.0.0",
 ]

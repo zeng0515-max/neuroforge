@@ -28,8 +28,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
+      # 只跑 3.11：运行时依赖 chromadb>=0.5.23,<0.6 依赖 chroma-hnswlib 0.7.x，
+      # 它没有 cp312 的 wheel，pip 在 3.12 上会退化成源码编译并失败。
+      # 依赖升到 chromadb 1.x（EmbeddingFunction API 变更）之后再扩矩阵。
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
