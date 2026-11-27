@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, Iterator, List, Optional
 
+from sqlalchemy import and_, func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.models import QueueTask
@@ -105,25 +108,99 @@ class TaskQueue:
             return True
 
     def claim(self, worker_id: str, limit: int = 1) -> List[Dict[str, Any]]:
-        """Atomically claim up to ``limit`` queued jobs for a worker."""
+        """Atomically claim up to ``limit`` queued jobs for a worker.
+
+        A ``SELECT`` only proposes a candidate; the claim itself is a
+        conditional ``UPDATE ... WHERE id = ? AND queue_status = 'queued'``.
+        The affected-row count decides the winner, so two worker processes
+        racing for the same job can never both succeed.
+        """
         claimed: List[Dict[str, Any]] = []
-        with self._lock, self._session() as s:
-            rows = (
-                s.query(QueueTask)
+        if limit <= 0:
+            return claimed
+
+        budget = max(1, limit) * 2 + 4  # bounded retries when losing races
+        attempts = 0
+        while len(claimed) < limit and attempts < budget:
+            attempts += 1
+            try:
+                outcome, item = self._claim_one(worker_id)
+            except OperationalError as exc:  # SQLite writer contention
+                logger.warning("claim() hit SQLite contention, retrying: %s", exc)
+                time.sleep(0.01)
+                continue
+            if outcome == "empty":
+                break
+            if outcome == "lost":
+                continue
+            if item is not None:
+                claimed.append(item)
+        return claimed
+
+    def _claim_one(self, worker_id: str) -> tuple[str, Optional[Dict[str, Any]]]:
+        """Try to claim exactly one queued job.
+
+        Returns ``("empty" | "lost" | "claimed", job)`` so callers can tell
+        "queue drained" apart from "another worker won this row".
+        """
+        with self._session() as s:
+            candidate = (
+                s.query(QueueTask.id)
                 .filter(QueueTask.queue_status == QueueStatus.QUEUED.value)
                 .order_by(QueueTask.priority.desc(), QueueTask.id.asc())
-                .limit(limit)
-                .all()
+                .first()
             )
-            for row in rows:
-                row.queue_status = QueueStatus.RUNNING.value
-                row.attempts += 1
-                row.worker_id = worker_id
-                row.lock_token = uuid.uuid4().hex
-                row.started_at = datetime.now()
-                row.updated_at = datetime.now()
-                claimed.append(self._to_dict(row, include_lock=True))
-        return claimed
+            if candidate is None:
+                return "empty", None
+            # Close the read snapshot before writing: under WAL a write that
+            # starts from a stale snapshot can fail with SQLITE_BUSY_SNAPSHOT.
+            s.commit()
+
+            token = uuid.uuid4().hex
+            now = datetime.now()
+            result = s.execute(
+                QueueTask.__table__.update()
+                .where(
+                    and_(
+                        QueueTask.id == candidate.id,
+                        QueueTask.queue_status == QueueStatus.QUEUED.value,
+                    )
+                )
+                .values(
+                    queue_status=QueueStatus.RUNNING.value,
+                    attempts=QueueTask.attempts + 1,
+                    worker_id=worker_id,
+                    lock_token=token,
+                    started_at=now,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                s.rollback()
+                return "lost", None
+
+            row = s.query(QueueTask).filter(QueueTask.id == candidate.id).one()
+            job = self._to_dict(row, include_lock=True)
+        logger.info("Worker %s claimed job %s", worker_id, job["task_id"])
+        return "claimed", job
+
+    def heartbeat(self, task_id: str, worker_id: str, lock_token: str = "") -> bool:
+        """Renew a running job's lease; False when the worker no longer owns it."""
+        now = datetime.now()
+        with self._lock, self._session() as s:
+            result = s.execute(
+                QueueTask.__table__.update()
+                .where(
+                    and_(
+                        QueueTask.task_id == task_id,
+                        QueueTask.worker_id == worker_id,
+                        QueueTask.queue_status == QueueStatus.RUNNING.value,
+                        *([QueueTask.lock_token == lock_token] if lock_token else []),
+                    )
+                )
+                .values(started_at=now, updated_at=now)
+            )
+            return result.rowcount == 1
 
     def complete(
         self,
@@ -132,6 +209,11 @@ class TaskQueue:
         result: Optional[Dict[str, Any]] = None,
         lock_token: str = "",
     ) -> bool:
+        """Mark a running job succeeded.
+
+        Only ``running`` jobs still owned by this worker can complete, so a job
+        cancelled (or requeued) mid-flight is never overwritten as succeeded.
+        """
         with self._lock, self._session() as s:
             row = self._find_owned(s, task_id, worker_id, lock_token)
             if row is None:
@@ -149,7 +231,7 @@ class TaskQueue:
         error: str,
         lock_token: str = "",
     ) -> bool:
-        """Fail a job; retry when attempts remain, otherwise mark failed."""
+        """Fail a running job; retry when attempts remain, otherwise mark failed."""
         with self._lock, self._session() as s:
             row = self._find_owned(s, task_id, worker_id, lock_token)
             if row is None:
@@ -174,6 +256,12 @@ class TaskQueue:
             return True
 
     def cancel(self, task_id: str) -> bool:
+        """Cancel a queued/running job and drop the worker's lease.
+
+        Clearing ``worker_id``/``lock_token`` is what makes the cancel stick:
+        the in-flight worker can no longer pass the ownership check in
+        ``complete()``, so it cannot flip the job back to succeeded.
+        """
         with self._lock, self._session() as s:
             row = (
                 s.query(QueueTask)
@@ -188,6 +276,9 @@ class TaskQueue:
             if row is None:
                 return False
             row.queue_status = QueueStatus.CANCELLED.value
+            row.worker_id = ""
+            row.lock_token = ""
+            row.started_at = None
             row.finished_at = datetime.now()
             row.updated_at = datetime.now()
             return True
@@ -234,20 +325,20 @@ class TaskQueue:
             return [self._to_dict(r) for r in rows]
 
     def stats(self) -> QueueStats:
+        """Queue counters computed with SQL aggregation (no full-table load)."""
         with self._session() as s:
-            rows = s.query(QueueTask.queue_status).all()
-        stats = QueueStats(total=len(rows))
-        for (status,) in rows:
-            if status == QueueStatus.QUEUED.value:
-                stats.queued += 1
-            elif status == QueueStatus.RUNNING.value:
-                stats.running += 1
-            elif status == QueueStatus.SUCCEEDED.value:
-                stats.succeeded += 1
-            elif status == QueueStatus.FAILED.value:
-                stats.failed += 1
-            elif status == QueueStatus.CANCELLED.value:
-                stats.cancelled += 1
+            rows = (
+                s.query(QueueTask.queue_status, func.count(QueueTask.id))
+                .group_by(QueueTask.queue_status)
+                .all()
+            )
+        counts = {status: count for status, count in rows}
+        stats = QueueStats(total=sum(counts.values()))
+        stats.queued = counts.get(QueueStatus.QUEUED.value, 0)
+        stats.running = counts.get(QueueStatus.RUNNING.value, 0)
+        stats.succeeded = counts.get(QueueStatus.SUCCEEDED.value, 0)
+        stats.failed = counts.get(QueueStatus.FAILED.value, 0)
+        stats.cancelled = counts.get(QueueStatus.CANCELLED.value, 0)
         return stats
 
     # ------------------------------------------------------------------ #
@@ -256,9 +347,11 @@ class TaskQueue:
 
     @staticmethod
     def _find_owned(s: Session, task_id: str, worker_id: str, lock_token: str) -> Optional[QueueTask]:
+        """Return the row only when this worker still owns a *running* job."""
         query = s.query(QueueTask).filter(
             QueueTask.task_id == task_id,
             QueueTask.worker_id == worker_id,
+            QueueTask.queue_status == QueueStatus.RUNNING.value,
         )
         if lock_token:
             query = query.filter(QueueTask.lock_token == lock_token)
