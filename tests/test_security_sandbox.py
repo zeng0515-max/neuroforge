@@ -246,7 +246,10 @@ time.sleep(30)
     result = asyncio.run(executor.aexecute(code))
 
     assert not result.success
-    assert "timed out" in result.error
+    # Linux may kill the child through a resource limit (SIGXCPU) instead of the
+    # wall-clock timeout, so accept either explanation but never a silent None.
+    assert result.error is not None
+    assert "timed out" in result.error or "signal" in result.error
     assert pid_file.exists()
 
     child_pid = int(pid_file.read_text())

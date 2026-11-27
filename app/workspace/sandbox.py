@@ -176,13 +176,22 @@ class SandboxExecutor:
             stdout, stdout_truncated = self._truncate(stdout)
             stderr, stderr_truncated = self._truncate(stderr)
 
+            return_code = proc.returncode or 0
+            error = None
+            if return_code < 0:
+                # POSIX: the child died to a signal (SIGXCPU from RLIMIT_CPU,
+                # SIGKILL from a resource limit, ...). Without this the caller
+                # only saw success=False with no explanation.
+                error = f"process terminated by signal {-return_code}"
+
             return ExecutionResult(
-                success=proc.returncode == 0,
+                success=return_code == 0,
                 stdout=stdout,
                 stderr=stderr,
-                return_code=proc.returncode or 0,
+                return_code=return_code,
                 elapsed_ms=round(elapsed, 2),
                 truncated=stdout_truncated or stderr_truncated,
+                error=error,
                 sandbox_id=sid,
             )
         except asyncio.TimeoutError:
@@ -350,7 +359,11 @@ class SandboxExecutor:
         try:
             import resource
 
-            cpu_limit = max(1, self.config.timeout_seconds)
+            # CPU-time backstop *above* the wall-clock timeout: a sleeping or
+            # blocked child accumulates no CPU time, so this must never be the
+            # thing that fires first (that would kill the child with SIGXCPU at
+            # the same second as asyncio.wait_for and hide the real timeout).
+            cpu_limit = max(1, self.config.timeout_seconds) + 5
             resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit + 1))
         except Exception:
             pass
