@@ -1,4 +1,4 @@
-﻿# NeuroForge V3
+# NeuroForge V3
 
 > Production-oriented Agent Engineering Platform for AI-assisted software delivery.
 
@@ -169,6 +169,28 @@ The repository does not claim that dry-run numbers are model quality numbers.
 - `benchmark-results/BENCHMARK_V2.md` and `benchmark-results/benchmark_results.json` now include a provenance section.
 
 Before claiming "review pass rate increased by X%" or "token cost reduced by Y%", run a live benchmark with a named model and save the output. Interviewers will ask for exactly that evidence.
+
+## Known gaps (honest boundaries)
+
+These are the limits of what is verified today. They are listed so a reader does not
+have to discover them under pressure:
+
+- **mypy is advisory in CI.** `app/` still carries ~97 pre-existing type errors, so the
+  lint job records them with `continue-on-error` instead of blocking. Nothing in this
+  README claims a clean type check.
+- **The container image was not built by a Docker daemon here** (the dev machine has no
+  Docker). Instead the file set is staged from the Dockerfile's own `COPY` lines and
+  started exactly as the image does: `uvicorn app.main:app` answers the image's
+  `HEALTHCHECK`, `/web/` serves the dashboard, and `scripts/worker.py --once` runs from
+  that staged root. A real `docker build` still needs a machine with Docker.
+- **The local sandbox is process-level soft isolation.** A network block based on an
+  in-process socket patch can be escaped by `ctypes` / subprocess; use Docker mode when
+  the code is untrusted.
+- **The kill switch is single-instance by design.** Each API and worker process reads the
+  persisted state at startup; a worker that is already running does not observe a freeze
+  until it restarts.
+- **The live Golden run in `benchmark-results/` is from 2026-08-09** and was not re-run
+  here (no model key on this machine).
 
 ## Production readiness
 
