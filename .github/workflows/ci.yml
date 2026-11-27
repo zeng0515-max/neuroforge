@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -33,8 +33,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -e ".[dev]"
-      # 当前覆盖基线 56.65%，门禁先锁 55% 防回退，后续通过补测试逐步提高到 70%+
-      - run: pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-report=term --cov-fail-under=58
+      # 当前覆盖基线 60%（语句+分支），门禁锁 59% 防回退，后续补测试逐步提到 70%+
+      # 覆盖率口径：语句 + 分支（与 README「60% branch coverage」一致）
+      - run: pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-branch --cov-report=term --cov-fail-under=59
       - if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
@@ -86,7 +87,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-report=term-missing --cov-fail-under=58
+      - run: pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-report=term-missing --cov-branch --cov-fail-under=59
 
   notify:
     if: failure()

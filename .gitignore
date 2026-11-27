@@ -35,6 +35,7 @@ ENV/
 .ruff_cache/
 .tox/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 
@@ -69,7 +70,6 @@ web/node_modules/
 .workbuddy/
 semantic_cache/
 captures/
-debug.log
 .trash/
 
 # ===== Generated Media & Screenshots =====
@@ -82,3 +82,24 @@ debug.log
 
 # ===== Benchmark Working Files =====
 /benchmark_results.json
+
+# ===== Vendored Three.js 未使用的大体积示例库 =====
+# web/index.html 的 importmap 只映射 three 与 three/addons/，three-scene.js 只 import
+# 6 个 postprocessing/shaders addon；下面三个 decode 库全站零引用，纯体积。
+# 文件保留在本机（vendor 离线快照仍完整），只是不纳入版本控制。
+web/vendor/three/examples/jsm/libs/rhino3dm/
+web/vendor/three/examples/jsm/libs/draco/
+web/vendor/three/examples/jsm/libs/basis/
+
+# ===== Demo 录制中间产物（由 Playwright 录制生成，只保留成片 neuroforge-demo.mp4） =====
+demo-video/*.webm
+
+# ===== Logs, Temp & OS/Editor Scratch =====
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+~$*
+desktop.ini
+.ipynb_checkpoints/

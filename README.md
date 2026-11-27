@@ -4,10 +4,10 @@
 
 NeuroForge turns a single natural-language requirement into a structured, reviewed, and testable software artifact. The project is not a "multi-agent demo": it is built around four engineering pillars that interviewers and production teams actually care about.
 
-**Current evidence:** 467 tests passing, 58.6% branch coverage, Golden Live eval 8/8 PASS (DeepSeek `deepseek-chat`), Ruff clean on `app/` and `tests/`.
+**Current evidence:** 501 tests passing (0 skipped), 60% branch coverage, Golden Live eval 8/8 PASS (DeepSeek `deepseek-chat`), Ruff clean on `app/` and `tests/`. Reproduce with `pytest -q --cov=app --cov-branch --cov-report=term`.
 
-1. **Deterministic governance** - a runtime policy layer, kill switch, permission rings, and audit trail control what an agent is allowed to do.
-2. **Durable execution** - a SQLite-backed job queue with retries, worker leases, crash recovery, and an explicit worker process.
+1. **Deterministic governance** - a runtime policy layer with a kill switch, five built-in deny-by-default rules, request-scoped tool permission rings, and a durable audit trail (every policy denial is persisted).
+2. **Durable execution** - a SQLite-backed job queue with atomic conditional-update claiming, retries, worker leases with heartbeat renewal, periodic stale-job reaping, and an exception-isolated worker loop.
 3. **Evaluability** - a golden dataset, deterministic evaluation gates, SLO checks, and honest benchmark provenance.
 4. **Observability** - structured metrics, alerts, trace ids, stage-level token tracking, health checks, and a real-time dashboard.
 
@@ -85,8 +85,10 @@ python scripts/worker.py --worker-id worker-1
 | `GET /api/v1/slo` | Current SLO status against targets |
 | `GET /api/v1/metrics` | Metrics snapshot |
 | `GET /api/v1/eval/report` | Eval report from completed tasks |
+| `GET /api/v1/policy/state` | Kill switch state (`X-Admin-Key` required) |
+| `POST /api/v1/policy/kill-switch` | Enable/disable the kill switch (`X-Admin-Key` required) |
 
-All routes require the `API_KEY` header when configured.
+All routes require the `API_KEY` header when configured. The two policy administration routes additionally require the `X-Admin-Key` header matching `ADMIN_API_KEY`; when that key is not configured they fail closed with `503` instead of letting an anonymous caller change governance state.
 
 ## Runtime policy
 
@@ -95,9 +97,28 @@ All routes require the `API_KEY` header when configured.
 - `ActionKind`: read, write, execute, network, llm_call, tool_call.
 - Kill switch: blocks mutating and execution actions until an operator disables it.
 - Custom rules: predicates fail closed, so an exception in policy code denies the action.
-- Violations: kept in a bounded audit trail and exposed through the same policy API.
+- Violations: kept in a bounded in-process buffer (`runtime_policy.recent_violations()`), and every denial is also persisted to the audit log as a `policy_denied` event (`AuditEventType.POLICY_DENIED`).
 
-Example:
+The kill switch has three entry points:
+
+**1. Admin API** — requires `X-Admin-Key` (and `API_KEY` when that is configured):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/policy/kill-switch \
+  -H "X-API-Key: $API_KEY" -H "X-Admin-Key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "reason": "release incident"}'
+```
+
+**2. Local CLI** — no HTTP, no admin key required:
+
+```bash
+python scripts/policy_cli.py --enable --reason "release incident"
+python scripts/policy_cli.py --disable --reason "incident resolved"
+python scripts/policy_cli.py --status
+```
+
+**3. In-process Python**:
 
 ```python
 from app.core.runtime_policy import ActionKind, runtime_policy
@@ -106,6 +127,10 @@ runtime_policy.set_kill_switch(True, reason="release incident")
 decision = runtime_policy.allow(ActionKind.EXECUTE, actor="sandbox")
 assert decision.allowed is False
 ```
+
+The API and the CLI persist the decision to `POLICY_STATE_PATH` (default `data/runtime_policy_state.json`), so a freeze survives a restart; the API process and `scripts/worker.py` restore it at startup.
+
+Boundary: the switch has single-instance / single-process semantics. Each API process and each worker reads the persisted state once when it starts, so a worker that is already running does not notice a freeze that happens later. Freeze on the API side and restart workers, or move the flag to shared storage, if one process must stop every other process without a restart.
 
 ## Durable task queue
 

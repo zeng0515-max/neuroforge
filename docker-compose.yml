@@ -53,14 +53,17 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
       - EMBEDDING_DIM=${EMBEDDING_DIM:-1024}
 
-      # API Key auth (leave empty to disable)
+      # API Key auth — APP_ENV=prod 时必须配置，否则服务按 fail-closed 拒绝启动
       - API_KEY=${API_KEY}
 
       # Sandbox execution
+      # 默认 local（进程级软隔离）；docker 模式需要访问 Docker daemon，
+      # 本 compose 不再挂载宿主 socket，故保持 local 为默认。
       - SANDBOX_MODE=${SANDBOX_MODE:-local}
       - SANDBOX_IMAGE=${SANDBOX_IMAGE:-python:3.11-slim}
       - SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-30}
       - SANDBOX_MAX_MEMORY_MB=${SANDBOX_MAX_MEMORY_MB:-512}
+      - SANDBOX_MAX_PROCESSES=${SANDBOX_MAX_PROCESSES:-64}
       - SANDBOX_NETWORK=${SANDBOX_NETWORK:-false}
 
       # Agent configuration
@@ -93,13 +96,15 @@ services:
     volumes:
       # Persistent data (SQLite, ChromaDB, checkpoints)
       - ./data:/app/data
-      # Mount host Docker socket for sandbox mode
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Mount skills directory for hot-reload
       - ./app/skills:/app/app/skills:ro
+    # NOTE: 不再挂载 /var/run/docker.sock。挂载宿主 socket 等于把宿主机 root
+    # 权限交给容器内的生成代码（sandbox 逃逸 = 整机沦陷）。如果确实需要
+    # Docker 沙箱模式，请单独起一个只跑沙箱的特权侧车，而不是给主服务挂 socket。
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:${APP_PORT:-8001}/api/v1/health"]
+      # 镜像里没有 curl，统一用 python 标准库探活（与 Dockerfile HEALTHCHECK 一致）
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/api/v1/health', timeout=3).status == 200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3

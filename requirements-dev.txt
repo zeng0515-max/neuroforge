@@ -1,0 +1,32 @@
+# ============================================================================
+# 开发 / 测试 / 质量工具依赖（development & tooling dependencies）
+#
+# 与 pyproject.toml 的 [project.optional-dependencies].dev 严格对齐；
+# 运行依赖见 requirements.txt（本文件首行已通过 -r 引入）。
+#
+# 安装：  pip install -r requirements-dev.txt
+# 边界说明：见 docs/DEPENDENCIES.md
+# ============================================================================
+
+# 运行依赖（先装运行依赖，dev 只为在其之上补工具）
+-r requirements.txt
+
+# ===== 测试框架 =====
+# 注意：pytest 同时是运行依赖，见 docs/DEPENDENCIES.md「为什么 pytest 留在
+# 运行依赖里」——TestGenAgent 会用 sys.executable -m pytest 在子进程里执行
+# 生成的测试，删掉运行依赖会让测试生成能力直接失效。
+pytest>=8.3.4
+pytest-cov>=4.1.0
+pytest-asyncio>=0.23.0
+pytest-env>=1.0.0
+
+# ===== HTTP 客户端（FastAPI TestClient 依赖 httpx） =====
+httpx>=0.27.0
+
+# ===== 静态检查 / 类型检查 / 提交钩子 =====
+ruff>=0.6.0
+mypy>=1.13.0
+pre-commit>=4.0.0
+
+# ===== 进程与资源观测（并发/队列相关测试用） =====
+psutil>=5.9

@@ -34,18 +34,27 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=prod \
     APP_PORT=8001 \
     DB_PATH=/app/data/app.db \
-    CHROMA_PERSIST_DIR=/app/data/chroma
+    CHROMA_PERSIST_DIR=/app/data/chroma \
+    HOME=/home/appuser
 
 WORKDIR /app
 
 # 从 builder 拷贝已安装的依赖
 COPY --from=builder /install /usr/local
 
-# 拷贝应用代码（仅 app/ 与必要文件）
+# 拷贝应用代码（app/ 服务本体，web/ dashboard 与 landing page，scripts/ 运维入口，
+# src/ golden 用例夹具）
 COPY app/ ./app/
+COPY web/ ./web/
+COPY scripts/ ./scripts/
+COPY src/ ./src/
 
-# 数据持久化目录（SQLite + ChromaDB）
-RUN mkdir -p /app/data
+# 数据持久化目录（SQLite + ChromaDB）+ 非 root 运行用户
+RUN mkdir -p /app/data \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8001
 
