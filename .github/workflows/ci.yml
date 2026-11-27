@@ -59,10 +59,16 @@ jobs:
             --cov=app --cov-branch --cov-report=term --cov-fail-under=59 2>&1 | tee pytest.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            echo "pytest exited with $rc"
-            tail -40 pytest.log | while IFS= read -r line; do
-              printf '::error::%s\n' "${line//$'\r'/}"
-            done
+            # GitHub keeps at most 10 annotations per step, so emit only the
+            # informative lines (never the coverage table rows) and put the
+            # exit code first.
+            printf '::error::pytest exited with %s\n' "$rc"
+            grep -nE 'FAILED|ERROR|Error|error:|no tests ran|Required test coverage|Traceback|ModuleNotFound|AttributeError|ImportError' pytest.log \
+              | grep -vE '^[0-9]+:\s*(app|tests)/[a-z_]+\.py\s' \
+              | head -8 | while IFS= read -r line; do
+                printf '::error::%s\n' "${line//$'\r'/}"
+              done
+            printf '::error::first log lines: %s\n' "$(head -3 pytest.log | tr '\n' '|' | tr -d '\r')"
           fi
           exit "$rc"
       - if: matrix.python-version == '3.11'
