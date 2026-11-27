@@ -183,6 +183,12 @@ class SandboxExecutor:
                 # SIGKILL from a resource limit, ...). Without this the caller
                 # only saw success=False with no explanation.
                 error = f"process terminated by signal {-return_code}"
+            elif return_code != 0:
+                # A non-zero exit with no explanation is useless to the caller;
+                # surface the tail of stderr as the reason.
+                detail = (stderr or "").strip().splitlines()
+                reason = detail[-1] if detail else ""
+                error = f"process exited with code {return_code}" + (f": {reason}" if reason else "")
 
             return ExecutionResult(
                 success=return_code == 0,
@@ -367,13 +373,11 @@ class SandboxExecutor:
             resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit + 1))
         except Exception:
             pass
-        try:
-            import resource
-
-            proc_limit = max(1, self.config.max_processes)
-            resource.setrlimit(resource.RLIMIT_NPROC, (proc_limit, proc_limit))
-        except Exception:
-            pass
+        # RLIMIT_NPROC is deliberately NOT set here: it counts processes for the
+        # whole UID, not for this process tree. On a shared host (e.g. a CI
+        # runner user that already runs dozens of processes) a small value makes
+        # every fork fail immediately instead of limiting the sandbox. The
+        # process-count limit is enforced in docker mode via --pids-limit.
 
     @staticmethod
     def _safe_decode(data: bytes) -> str:
