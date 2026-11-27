@@ -1,10 +1,10 @@
-# NeuroForge V3
+﻿# NeuroForge V3
 
 > Production-oriented Agent Engineering Platform for AI-assisted software delivery.
 
 NeuroForge turns a single natural-language requirement into a structured, reviewed, and testable software artifact. The project is not a "multi-agent demo": it is built around four engineering pillars that interviewers and production teams actually care about.
 
-**Current evidence:** 501 tests passing (0 skipped), 60% branch coverage, Golden Live eval 8/8 PASS (DeepSeek `deepseek-chat`), Ruff clean on `app/` and `tests/`. Reproduce with `pytest -q --cov=app --cov-branch --cov-report=term`.
+**Current evidence:** 511 tests passing (0 skipped), 60% branch coverage, Golden Live eval 8/8 PASS (DeepSeek `deepseek-chat`), Ruff clean on `app/` and `tests/`. Reproduce with `pytest -q --cov=app --cov-branch --cov-report=term`.
 
 1. **Deterministic governance** - a runtime policy layer with a kill switch, five built-in deny-by-default rules, request-scoped tool permission rings, and a durable audit trail (every policy denial is persisted).
 2. **Durable execution** - a SQLite-backed job queue with atomic conditional-update claiming, retries, worker leases with heartbeat renewal, periodic stale-job reaping, and an exception-isolated worker loop.

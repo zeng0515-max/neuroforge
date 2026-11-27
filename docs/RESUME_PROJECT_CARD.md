@@ -1,4 +1,4 @@
-# NeuroForge V3 Resume Project Card
+﻿# NeuroForge V3 Resume Project Card
 
 > 投递方向：AI Agent / LLM 应用 / 后端工程 / 质量评测
 
@@ -25,7 +25,7 @@ NeuroForge V3 是一个可评测、可治理、可恢复的 Agent 工程平台�
 4. 补齐 SLO、审计、指标快照、CI/CD 镜像构建与健康冒烟，并修复审计日志、记忆写入、审查严重级别等真实运行时缺陷。
 
 **Result：**
-- 501 个 pytest 用例通过（0 skipped），分支覆盖率 60%
+- 511 个 pytest 用例通过（0 skipped），分支覆盖率 60%
 - Golden Live 评测 8/8 PASS（DeepSeek `deepseek-chat`）
 - Ruff 检查 `app/` 与 `tests/` 全绿
 - dry-run benchmark 已重跑并写入来源，不再把本地机制数据冒充模型质量
@@ -37,13 +37,13 @@ NeuroForge V3 是一个可评测、可治理、可恢复的 Agent 工程平台�
 
 > Key contributions: deterministic runtime policy with a kill switch and five deny-by-default rules, request-scoped permission rings, and a durable audit trail; SQLite-backed durable job queue with atomic conditional-update claiming, lease heartbeat renewal, retries, and crash recovery; Golden evaluation suite and SLO monitoring; honest benchmark provenance; production CI/CD with image scanning and health smoke tests.
 
-> Verified: 501 tests passing, 60% branch coverage, Golden eval 8/8 PASS, Ruff clean.
+> Verified: 511 tests passing, 60% branch coverage, Golden eval 8/8 PASS, Ruff clean.
 
 ## 可写进简历的量化点
 
 | 指标 | 当前证据 | 说明 |
 | --- | --- | --- |
-| 测试 | 501 passed（0 skipped） | 含 API、队列并发、权限隔离、策略规则、评测、SLO 新增测试 |
+| 测试 | 511 passed（0 skipped） | 含 API、队列并发、权限隔离、策略规则、评测、SLO 新增测试 |
 | 覆盖率 | 60%（分支） | CI 门槛 58%，后续可继续提到 70%+ |
 | Golden 评测 | 8/8 PASS | 确定性离线回归，不依赖 LLM |
 | Golden Live | 8/8 PASS | DeepSeek `deepseek-chat`，2026-08-09，报告已保存 |
