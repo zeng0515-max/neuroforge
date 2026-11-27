@@ -40,9 +40,31 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -e ".[dev]"
+      # 打印环境，便于对照本地：runner 上的 Python / pytest / 关键依赖版本
+      - name: Print environment
+        run: |
+          python -V
+          python -m pip -V
+          python -m pytest --version
+          python -m pip list 2>/dev/null | grep -Ei '^(pytest|pytest-cov|chromadb|mcp|langchain|langgraph|fastapi|sqlalchemy)\b' || true
       # 当前覆盖基线 60%（语句+分支），门禁锁 59% 防回退，后续补测试逐步提到 70%+
       # 覆盖率口径：语句 + 分支（与 README「60% branch coverage」一致）
-      - run: pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-branch --cov-report=term --cov-fail-under=59
+      # 用 `python -m pytest` 而不是裸 `pytest`：不依赖脚本是否进了 PATH。
+      # 失败时把尾部输出打成 ::error:: 注释，未登录也能通过 check-run annotations
+      # 读到原因（日志下载接口需要仓库管理员权限）。
+      - name: Run tests
+        run: |
+          set +e
+          python -m pytest tests/ -o "addopts=" -m "not slow" \
+            --cov=app --cov-branch --cov-report=term --cov-fail-under=59 2>&1 | tee pytest.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "pytest exited with $rc"
+            tail -40 pytest.log | while IFS= read -r line; do
+              printf '::error::%s\n' "${line//$'\r'/}"
+            done
+          fi
+          exit "$rc"
       - if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
