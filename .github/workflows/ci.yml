@@ -122,16 +122,22 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-report=term-missing --cov-branch --cov-fail-under=59
+      # 与 test job 同口径：addopts 里的 --strict-markers 会把 `-m "not slow"`
+      # 变成 collection error（slow 未注册），所以这里也覆盖 addopts。
+      - run: python -m pytest tests/ -o "addopts=" -m "not slow" --cov=app --cov-branch --cov-report=term-missing --cov-fail-under=59
 
   notify:
     if: failure()
     needs: [test, lint, benchmark, golden-eval, quality-gate]
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
-      - uses: slackapi/slack-github-action@v2
+      # 没有配置 Slack webhook 时直接跳过，避免仓库一直挂一个红叉
+      - if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v2
         with:
           payload: '{"text":"❌ CI failed: ${{ github.sha }}"}'
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}

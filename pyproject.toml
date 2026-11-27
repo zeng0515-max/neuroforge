@@ -93,6 +93,12 @@ addopts = [
     "--strict-markers",
     "--showlocals",
 ]
+# --strict-markers is on, so every marker used with `-m` must be registered here
+# (CI selects with `-m "not slow"`).
+markers = [
+    "slow: long-running tests excluded from the default CI run",
+    "integration: needs an external service or network access",
+]
 
 [tool.ruff]
 # 宽松配置：仅启用 E/F/W/I，避免对现有代码引入大量整改

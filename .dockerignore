@@ -24,9 +24,9 @@ htmlcov
 build
 dist
 
-# 测试 / 脚本（运行时不需要）
+# 测试（运行时不需要；scripts/ 必须保留——Dockerfile 会 COPY 它，容器里要跑
+# worker / golden_eval，之前把 scripts 排除导致 docker build 报 "/scripts: not found"）
 tests
-scripts
 
 # 前端 node_modules（如果将来引入前端构建）
 web/node_modules
