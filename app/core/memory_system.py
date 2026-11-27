@@ -183,6 +183,7 @@ class WorkingMemory:
     def __init__(self, capacity: int = 200) -> None:
         self._capacity: int = max(1, capacity)
         self._store: OrderedDict[str, Any] = OrderedDict()
+        self._lock = threading.Lock()
         self._logger = logging.getLogger(f"{__name__}.WorkingMemory")
 
     @property
@@ -190,52 +191,61 @@ class WorkingMemory:
         return self._capacity
 
     def add_item(self, key: str, value: Any) -> None:
-        if key in self._store:
-            self._store.move_to_end(key)
-            self._store[key] = value
-        else:
-            if len(self._store) >= self._capacity:
-                evicted_key, _ = self._store.popitem(last=False)
-                self._logger.info("LRU 淘汰: key=%s", evicted_key)
-            self._store[key] = value
+        with self._lock:
+            if key in self._store:
+                self._store.move_to_end(key)
+                self._store[key] = value
+            else:
+                if len(self._store) >= self._capacity:
+                    evicted_key, _ = self._store.popitem(last=False)
+                    self._logger.info("LRU 淘汰: key=%s", evicted_key)
+                self._store[key] = value
 
     def get_item(self, key: str, default: Any = None) -> Any:
-        if key in self._store:
-            self._store.move_to_end(key)
-            return self._store[key]
-        return default
+        with self._lock:
+            if key in self._store:
+                self._store.move_to_end(key)
+                return self._store[key]
+            return default
 
     def get_all(self) -> Dict[str, Any]:
-        return dict(self._store)
+        with self._lock:
+            return dict(self._store)
 
     def clear(self) -> None:
-        count = len(self._store)
-        self._store.clear()
+        with self._lock:
+            count = len(self._store)
+            self._store.clear()
         self._logger.info("工作记忆已清空: %d 条", count)
 
     def snapshot(self) -> Dict[str, Any]:
         import copy
-        return {
-            "timestamp": time.time(),
-            "items": copy.deepcopy(dict(self._store)),
-            "capacity": self._capacity,
-        }
+        with self._lock:
+            return {
+                "timestamp": time.time(),
+                "items": copy.deepcopy(dict(self._store)),
+                "capacity": self._capacity,
+            }
 
     def restore(self, snapshot: Dict[str, Any]) -> None:
         import copy
-        self._store.clear()
-        for k, v in snapshot.get("items", {}).items():
-            self._store[k] = copy.deepcopy(v)
-        self._capacity = snapshot.get("capacity", self._capacity)
+        with self._lock:
+            self._store.clear()
+            for k, v in snapshot.get("items", {}).items():
+                self._store[k] = copy.deepcopy(v)
+            self._capacity = snapshot.get("capacity", self._capacity)
 
     def __len__(self) -> int:
-        return len(self._store)
+        with self._lock:
+            return len(self._store)
 
     def __contains__(self, key: str) -> bool:
-        return key in self._store
+        with self._lock:
+            return key in self._store
 
     def __repr__(self) -> str:
-        return f"WorkingMemory(items={len(self._store)}, capacity={self._capacity})"
+        with self._lock:
+            return f"WorkingMemory(items={len(self._store)}, capacity={self._capacity})"
 
 
 # ------------------------------------------------------------------ #
@@ -261,6 +271,7 @@ class EpisodicMemory:
     def __init__(self, max_events: int = 500) -> None:
         self._max_events: int = max(1, max_events)
         self._events: List[EventRecord] = []
+        self._lock = threading.Lock()
         self._logger = logging.getLogger(f"{__name__}.EpisodicMemory")
 
     def record_event(
@@ -279,10 +290,11 @@ class EpisodicMemory:
             event_type=event_type, data=data, timestamp=ts,
             what_happened=what_happened, why=why, outcome=outcome,
         )
-        if len(self._events) >= self._max_events:
-            evicted = self._events.pop(0)
-            self._logger.info("淘汰最旧事件: type=%s, id=%s", evicted.event_type, evicted.event_id)
-        self._events.append(event)
+        with self._lock:
+            if len(self._events) >= self._max_events:
+                evicted = self._events.pop(0)
+                self._logger.info("淘汰最旧事件: type=%s, id=%s", evicted.event_type, evicted.event_id)
+            self._events.append(event)
         return event.event_id
 
     def query_events(
@@ -292,59 +304,65 @@ class EpisodicMemory:
         limit: Optional[int] = None,
     ) -> List[EventRecord]:
         results: List[EventRecord] = []
-        for evt in self._events:
-            if event_type and evt.event_type != event_type:
-                continue
-            if filter and not filter(evt):
-                continue
-            results.append(evt)
-            if limit and len(results) >= limit:
-                break
+        with self._lock:
+            for evt in self._events:
+                if event_type and evt.event_type != event_type:
+                    continue
+                if filter and not filter(evt):
+                    continue
+                results.append(evt)
+                if limit and len(results) >= limit:
+                    break
         return results
 
     def get_timeline(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "event_id": evt.event_id, "event_type": evt.event_type,
-                "timestamp": evt.timestamp, "data": evt.data,
-                "what_happened": evt.what_happened, "why": evt.why,
-                "outcome": evt.outcome,
-            }
-            for evt in self._events
-        ]
+        with self._lock:
+            return [
+                {
+                    "event_id": evt.event_id, "event_type": evt.event_type,
+                    "timestamp": evt.timestamp, "data": evt.data,
+                    "what_happened": evt.what_happened, "why": evt.why,
+                    "outcome": evt.outcome,
+                }
+                for evt in self._events
+            ]
 
     def summarize(self) -> Dict[str, Any]:
-        if not self._events:
-            return {"total_events": 0, "type_counts": {}, "time_range": None, "latest": None}
-        type_counts: Dict[str, int] = {}
-        for evt in self._events:
-            type_counts[evt.event_type] = type_counts.get(evt.event_type, 0) + 1
-        timestamps = [e.timestamp for e in self._events]
-        return {
-            "total_events": len(self._events),
-            "type_counts": type_counts,
-            "time_range": {
-                "start": min(timestamps), "end": max(timestamps),
-                "duration_seconds": round(max(timestamps) - min(timestamps), 2),
-            },
-            "latest": {
-                "event_id": self._events[-1].event_id,
-                "event_type": self._events[-1].event_type,
-                "timestamp": self._events[-1].timestamp,
-                "data": self._events[-1].data,
-            },
-        }
+        with self._lock:
+            if not self._events:
+                return {"total_events": 0, "type_counts": {}, "time_range": None, "latest": None}
+            type_counts: Dict[str, int] = {}
+            for evt in self._events:
+                type_counts[evt.event_type] = type_counts.get(evt.event_type, 0) + 1
+            timestamps = [e.timestamp for e in self._events]
+            return {
+                "total_events": len(self._events),
+                "type_counts": type_counts,
+                "time_range": {
+                    "start": min(timestamps), "end": max(timestamps),
+                    "duration_seconds": round(max(timestamps) - min(timestamps), 2),
+                },
+                "latest": {
+                    "event_id": self._events[-1].event_id,
+                    "event_type": self._events[-1].event_type,
+                    "timestamp": self._events[-1].timestamp,
+                    "data": self._events[-1].data,
+                },
+            }
 
     def clear(self) -> None:
-        count = len(self._events)
-        self._events.clear()
+        with self._lock:
+            count = len(self._events)
+            self._events.clear()
         self._logger.info("情景记忆已清空: %d 条", count)
 
     def __len__(self) -> int:
-        return len(self._events)
+        with self._lock:
+            return len(self._events)
 
     def __repr__(self) -> str:
-        return f"EpisodicMemory(events={len(self._events)}, max={self._max_events})"
+        with self._lock:
+            return f"EpisodicMemory(events={len(self._events)}, max={self._max_events})"
 
 
 # ------------------------------------------------------------------ #

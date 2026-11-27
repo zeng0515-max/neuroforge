@@ -146,6 +146,8 @@ class SecurityConfig(BaseConfig):
     project_root: Union[str, Path] = Field(default=PROJECT_ROOT_DEFAULT, alias="PROJECT_ROOT")
     cors_origins: Union[str, List[str]] = Field(default="*", alias="CORS_ORIGINS")
     api_key: str = Field(default="", alias="API_KEY")  # 预留：简单 API key 鉴权开关
+    # 运行时治理（kill switch）管理接口专用密钥；留空则管理接口直接 503（fail-closed）
+    admin_key: str = Field(default="", alias="ADMIN_API_KEY")
 
     @field_validator("allowed_modules", "forbidden_nodes", "cors_origins", mode="after")
     @classmethod
@@ -293,7 +295,7 @@ class ModelRoutingConfig(BaseConfig):
 
 class SandboxConfig(BaseConfig):
     """Docker / Local sandbox 安全隔离执行配置（借鉴 OpenHands V1 workspace 设计）"""
-    mode: str = Field(default="local", alias="SANDBOX_MODE")
+    mode: str = Field(default="docker", alias="SANDBOX_MODE")
     """执行模式: local（子进程）| docker（容器隔离）"""
     image: str = Field(default="python:3.11-slim", alias="SANDBOX_IMAGE")
     """Docker 镜像"""
@@ -301,6 +303,8 @@ class SandboxConfig(BaseConfig):
     """执行超时（秒）"""
     max_memory_mb: int = Field(default=512, alias="SANDBOX_MAX_MEMORY_MB")
     """内存上限（MB）"""
+    max_processes: int = Field(default=64, alias="SANDBOX_MAX_PROCESSES")
+    """进程数上限"""
     network_enabled: bool = Field(default=False, alias="SANDBOX_NETWORK")
     """是否允许网络访问"""
 

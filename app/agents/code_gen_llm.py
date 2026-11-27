@@ -406,12 +406,8 @@ def _run_tool_loop(
             try:
                 from app.tools.tool_registry import ToolPermissionLevel, tool_registry
 
-                previous_permission = tool_registry.get_current_permission()
-                tool_registry.set_permission(ToolPermissionLevel.MODIFY)
-                try:
+                with tool_registry.permission_scope(ToolPermissionLevel.MODIFY):
                     tool_result = tool_registry.call(tool_name, tool_args)
-                finally:
-                    tool_registry.set_permission(previous_permission)
                 result_text = (
                     tool_result
                     if isinstance(tool_result, str)

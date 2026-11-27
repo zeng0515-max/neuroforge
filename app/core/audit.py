@@ -36,6 +36,8 @@ class AuditEventType(str, Enum):
     HUMAN_APPROVAL = "human_approval"
     PIPELINE_START = "pipeline_start"
     PIPELINE_END = "pipeline_end"
+    POLICY_DENIED = "policy_denied"
+    POLICY_KILL_SWITCH = "policy_kill_switch"
 
 
 class ActorType(str, Enum):

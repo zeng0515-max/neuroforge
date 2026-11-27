@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import fnmatch
 import importlib
 import inspect
@@ -8,10 +9,11 @@ import logging
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Type, Union
 
 from pydantic import BaseModel, Field, create_model
 
@@ -209,14 +211,22 @@ class ToolApprovalManager:
 
 
 class ToolRegistry:
-    """工具注册表：注册、调用、权限管理、审计日志、审批工作流。"""
+    """工具注册表：注册、调用、权限管理、审计日志、审批工作流。
+
+    权限等级存放在 ``ContextVar`` 里而不是实例属性上：每个请求（asyncio 任务
+    或线程）拿到自己的上下文副本，一个请求临时提升到 MODIFY 不会污染并发中的
+    其他请求。进程级默认等级仍可通过 ``set_default_permission`` 调整（运维开关）。
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._tools: Dict[str, ToolEntry] = {}
         self._audit = ToolAudit()
         self._approval_mgr = ToolApprovalManager()
-        self._current_permission_level: ToolPermissionLevel = ToolPermissionLevel.OBSERVE
+        self._default_permission_level: ToolPermissionLevel = ToolPermissionLevel.OBSERVE
+        self._permission_var: contextvars.ContextVar[Optional[ToolPermissionLevel]] = (
+            contextvars.ContextVar("neuroforge_tool_permission", default=None)
+        )
 
     # ------------------------------------------------------------------ #
     #  注册
@@ -338,19 +348,49 @@ class ToolRegistry:
         ToolPermissionLevel.DANGEROUS: 3,
     }
 
-    def set_permission(self, level: ToolPermissionLevel) -> None:
-        self._current_permission_level = level
-        logger.info("工具调用权限已设为: %s", level.value)
+    def set_permission(self, level: ToolPermissionLevel) -> contextvars.Token:
+        """Set the permission level for the *current* context only.
+
+        Returns a token so the previous level can be restored with
+        ``reset_permission`` (or use :meth:`permission_scope`).
+        """
+        logger.info("工具调用权限已设为: %s（当前上下文）", level.value)
+        return self._permission_var.set(level)
+
+    def reset_permission(self, token: contextvars.Token) -> None:
+        """Restore the level captured by a previous ``set_permission`` call."""
+        try:
+            self._permission_var.reset(token)
+        except (ValueError, RuntimeError):  # token from another context
+            self._permission_var.set(None)
+
+    @contextmanager
+    def permission_scope(self, level: ToolPermissionLevel) -> Iterator[None]:
+        """Temporarily raise/lower the permission level inside this context."""
+        token = self._permission_var.set(level)
+        try:
+            yield
+        finally:
+            self.reset_permission(token)
+
+    def set_default_permission(self, level: ToolPermissionLevel) -> None:
+        """Process-wide default used when the current context sets nothing."""
+        self._default_permission_level = level
+        logger.info("工具调用默认权限已设为: %s", level.value)
+
+    def get_default_permission(self) -> ToolPermissionLevel:
+        return self._default_permission_level
 
     def get_current_permission(self) -> ToolPermissionLevel:
-        return self._current_permission_level
+        level = self._permission_var.get()
+        return level if level is not None else self._default_permission_level
 
     def require_permission(self, required_level: ToolPermissionLevel):
         """装饰器：要求调用方具备指定权限等级。"""
 
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             def wrapper(*args: Any, **kwargs: Any) -> Any:
-                current = self._current_permission_level
+                current = self.get_current_permission()
                 if self._LEVEL_ORDER.get(current, 0) < self._LEVEL_ORDER.get(required_level, 0):
                     raise PermissionError(f"权限不足: 需要 {required_level.value}，当前 {current.value}")
                 return func(*args, **kwargs)
@@ -389,13 +429,14 @@ class ToolRegistry:
         except ImportError:
             pass
 
-        current_level = self._LEVEL_ORDER.get(self._current_permission_level, 0)
+        current_permission = self.get_current_permission()
+        current_level = self._LEVEL_ORDER.get(current_permission, 0)
         required_level = self._LEVEL_ORDER.get(entry.spec.permission_level, 0)
         if current_level < required_level:
             self._audit.log(name, kwargs or {}, None, False, caller)
             raise PermissionError(
                 f"权限不足: 工具 '{name}' 需要 {entry.spec.permission_level.value} 权限，"
-                f"当前上下文权限为 {self._current_permission_level.value}"
+                f"当前上下文权限为 {current_permission.value}"
             )
 
         if entry.spec.require_approval:

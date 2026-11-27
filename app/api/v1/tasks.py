@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.core.guardrails import input_guardrail
 from app.core.llm_adapter import llm
 from app.db.sqlite_client import db
-from app.graph.pipeline import run_pipeline, stream_pipeline
+from app.graph.pipeline import has_checkpoint, run_pipeline, stream_pipeline
 from app.graph.state import (
     CodePackage,
     PipelinePhase,
@@ -92,6 +92,7 @@ async def _delayed_cleanup(task_id: str, delay: float = 300.0) -> None:
             return
         _final_states.pop(task_id, None)
         _done_events.pop(task_id, None)
+        _stream_events.pop(task_id, None)
 
 
 async def _run_pipeline_bg(task_id: str, user_request: str,
@@ -423,6 +424,7 @@ async def clear_history() -> Dict[str, Any]:
     # 同时清空内存中的 final state
     _final_states.clear()
     async with _lock:
+        _stream_events.clear()
         for k in list(_done_events.keys()):
             _done_events[k].set()
         _done_events.clear()
@@ -437,6 +439,7 @@ async def delete_task(task_id: str) -> Dict[str, Any]:
     if not ok:
         raise HTTPException(404, f"任务 {task_id} 不存在")
     _final_states.pop(task_id, None)
+    _stream_events.pop(task_id, None)
     ev = _done_events.pop(task_id, None)
     if ev:
         ev.set()
@@ -481,6 +484,12 @@ async def resume_task(task_id: str) -> Dict[str, Any]:
         return {"status": "already_done", "task_id": task_id, "phase": task.phase}
     if task_id in _running:
         return {"status": "already_running", "task_id": task_id}
+
+    if not has_checkpoint(task_id):
+        raise HTTPException(
+            409,
+            "该任务没有可恢复的 LangGraph checkpoint；/tasks 创建的流式任务不持久化断点，无法恢复，请重新创建任务。",
+        )
 
     # 后台触发 resume
     async def _resume_bg() -> None:

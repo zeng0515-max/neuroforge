@@ -1,33 +1,65 @@
-"""Docker / Local sandbox for safe code execution.
+"""Sandbox for safe code execution (Docker-first, hardened local fallback).
 
-借鉴 OpenHands V1 workspace 设计：
-  - Local mode：直接在子进程中运行（快速开发）
-  - Docker mode：在隔离容器中运行（生产安全）
-  - 统一 ExecutionResult 接口，上层无需感知模式
+Isolation boundary, stated honestly:
+
+- ``docker`` mode is the only mode with OS-level isolation (namespaces, read-only
+  root, memory/pids limits, no network). Use it in production.
+- ``local`` mode is *process-level soft isolation*: trimmed environment, blocked
+  network via an in-process socket monkeypatch, resource limits and a hard
+  timeout. It is **not** a security boundary — code that uses ``ctypes``,
+  re-imports ``socket`` or spawns a subprocess can escape the network block.
+  Treat it as a development convenience, never as a jail.
+
+Every execution also passes ``runtime_policy`` (kill switch, default rules) and
+policy denials are persisted to the audit log by ``RuntimePolicy._persist_denial``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import os
+import signal
+import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Enums & Data Classes
-# ---------------------------------------------------------------------------
+SANDBOX_SAFE_ENV_VARS = {
+    "PATH",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "PYTHONIOENCODING",
+    "PYTHONUNBUFFERED",
+}
+
+_LOCAL_NETWORK_GUARD = (
+    "import socket, runpy, sys\n"
+    "class _SandboxNetworkDisabled(PermissionError):\n"
+    "    pass\n"
+    "def _blocked_socket(*args, **kwargs):\n"
+    "    raise _SandboxNetworkDisabled('network access is disabled in local sandbox')\n"
+    "socket.socket = _blocked_socket\n"
+    "sys.argv = [sys.argv[1], *sys.argv[2:]]\n"
+    "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+)
+
 
 class SandboxMode(str, Enum):
     LOCAL = "local"
@@ -36,10 +68,11 @@ class SandboxMode(str, Enum):
 
 @dataclass
 class SandboxConfig:
-    mode: SandboxMode = SandboxMode.LOCAL
+    mode: SandboxMode = SandboxMode.DOCKER
     image: str = "python:3.11-slim"
     timeout_seconds: int = 30
     max_memory_mb: int = 512
+    max_processes: int = 64
     max_output_bytes: int = 1024 * 1024
     network_enabled: bool = False
     read_only_root: bool = True
@@ -49,15 +82,17 @@ class SandboxConfig:
 
     @classmethod
     def from_app_config(cls) -> "SandboxConfig":
-        """Build from global app settings (app.core.config.settings)."""
         try:
             from app.core.config import settings as s
+
+            sandbox = getattr(s, "sandbox", s)
             return cls(
-                mode=SandboxMode(s.sandbox_mode) if getattr(s, "sandbox_mode", None) else SandboxMode.LOCAL,
-                image=getattr(s, "sandbox_image", "python:3.11-slim"),
-                timeout_seconds=getattr(s, "sandbox_timeout", 30),
-                max_memory_mb=getattr(s, "sandbox_max_memory_mb", 512),
-                network_enabled=getattr(s, "sandbox_network_enabled", False),
+                mode=SandboxMode(getattr(sandbox, "mode", "docker")),
+                image=getattr(sandbox, "image", "python:3.11-slim"),
+                timeout_seconds=getattr(sandbox, "timeout", 30),
+                max_memory_mb=getattr(sandbox, "max_memory_mb", 512),
+                max_processes=getattr(sandbox, "max_processes", 64),
+                network_enabled=getattr(sandbox, "network_enabled", False),
             )
         except Exception:
             return cls()
@@ -75,30 +110,22 @@ class ExecutionResult:
     error: Optional[str] = None
 
 
-# ---------------------------------------------------------------------------
-# Sandbox Executor
-# ---------------------------------------------------------------------------
-
 class SandboxExecutor:
-    """Unified executor — local subprocess or Docker container."""
+    """Unified executor with a Docker-first policy and hardened local fallback."""
 
     def __init__(self, config: Optional[SandboxConfig] = None):
         self.config = config or SandboxConfig.from_app_config()
 
-    # -- public API ----------------------------------------------------------
-
     def execute(self, code: str, *, filename: str = "main.py", env: Optional[dict] = None) -> ExecutionResult:
-        """Synchronous execute (wraps async for convenience)."""
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self.aexecute(code, filename=filename, env=env))
-        raise RuntimeError("Use aexecute() inside async context — cannot nest event loops.")
+        raise RuntimeError("Use aexecute() inside async context; cannot nest event loops.")
 
     async def aexecute(
         self, code: str, *, filename: str = "main.py", env: Optional[dict] = None
     ) -> ExecutionResult:
-        """Asynchronous execute — primary API."""
         from app.core.runtime_policy import ActionKind, runtime_policy
 
         decision = runtime_policy.allow(
@@ -114,25 +141,30 @@ class SandboxExecutor:
             )
 
         if self.config.mode == SandboxMode.DOCKER:
-            return await self._docker_execute(code, filename, env)
+            result = await self._docker_execute(code, filename, env)
+            if result.error and "Docker is not installed" in result.error:
+                logger.warning("Docker is unavailable; falling back to hardened local sandbox")
+                return await self._local_execute(code, filename, env)
+            return result
         return await self._local_execute(code, filename, env)
-
-    # -- local ---------------------------------------------------------------
 
     async def _local_execute(self, code: str, filename: str, env: Optional[dict]) -> ExecutionResult:
         sid = _sandbox_id()
         tmp = tempfile.mkdtemp(prefix="neuroforge_sb_")
         code_path = Path(tmp) / filename
+        proc = None
         try:
             code_path.write_text(code, encoding="utf-8")
             t0 = time.perf_counter()
+            safe_env = self._build_safe_env(env)
 
             proc = await asyncio.create_subprocess_exec(
-                "python", str(code_path),
+                *self._local_command(code_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(code_path.parent),
-                env={**os.environ, **(env or {})},
+                env=safe_env,
+                **self._local_process_kwargs(),
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=self.config.timeout_seconds
@@ -141,7 +173,8 @@ class SandboxExecutor:
 
             stdout = self._safe_decode(stdout_bytes)
             stderr = self._safe_decode(stderr_bytes)
-            stdout, truncated = self._truncate(stdout)
+            stdout, stdout_truncated = self._truncate(stdout)
+            stderr, stderr_truncated = self._truncate(stderr)
 
             return ExecutionResult(
                 success=proc.returncode == 0,
@@ -149,10 +182,12 @@ class SandboxExecutor:
                 stderr=stderr,
                 return_code=proc.returncode or 0,
                 elapsed_ms=round(elapsed, 2),
-                truncated=truncated,
+                truncated=stdout_truncated or stderr_truncated,
                 sandbox_id=sid,
             )
         except asyncio.TimeoutError:
+            if proc is not None:
+                await self._terminate_process(proc)
             return ExecutionResult(
                 success=False,
                 error=f"Execution timed out after {self.config.timeout_seconds}s",
@@ -164,31 +199,13 @@ class SandboxExecutor:
         finally:
             _rmtree(tmp)
 
-    # -- docker --------------------------------------------------------------
-
     async def _docker_execute(self, code: str, filename: str, env: Optional[dict]) -> ExecutionResult:
         sid = _sandbox_id()
         tmp = tempfile.mkdtemp(prefix="neuroforge_docker_")
         code_path = Path(tmp) / filename
         try:
             code_path.write_text(code, encoding="utf-8")
-
-            # Build docker run command
-            cmd = [
-                "docker", "run", "--rm",
-                f"--name=nf-sandbox-{sid}",
-                f"--memory={self.config.max_memory_mb}m",
-                f"--cpus=1",
-                f"--network={'none' if not self.config.network_enabled else 'bridge'}",
-                f"--read-only={str(self.config.read_only_root).lower()}",
-                f"--tmpfs=/tmp:exec,size=256m",
-                f"-v", f"{code_path.parent}:{self.config.work_dir}:ro",
-                f"-w", self.config.work_dir,
-                *self._docker_env_args(env),
-                self.config.image,
-                "python", str(Path(self.config.work_dir) / filename),
-            ]
-
+            cmd = self._docker_cmd(code_path, sid, env)
             t0 = time.perf_counter()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -202,7 +219,8 @@ class SandboxExecutor:
 
             stdout = self._safe_decode(stdout_bytes)
             stderr = self._safe_decode(stderr_bytes)
-            stdout, truncated = self._truncate(stdout)
+            stdout, stdout_truncated = self._truncate(stdout)
+            stderr, stderr_truncated = self._truncate(stderr)
 
             return ExecutionResult(
                 success=proc.returncode == 0,
@@ -210,13 +228,15 @@ class SandboxExecutor:
                 stderr=stderr,
                 return_code=proc.returncode or 0,
                 elapsed_ms=round(elapsed, 2),
-                truncated=truncated,
+                truncated=stdout_truncated or stderr_truncated,
                 sandbox_id=sid,
             )
         except asyncio.TimeoutError:
-            # Force kill the container
             try:
-                await asyncio.create_subprocess_exec("docker", "kill", f"nf-sandbox-{sid}")
+                kill_proc = await asyncio.create_subprocess_exec(
+                    "docker", "kill", f"nf-sandbox-{sid}"
+                )
+                await kill_proc.communicate()
             except Exception:
                 pass
             return ExecutionResult(
@@ -236,7 +256,111 @@ class SandboxExecutor:
         finally:
             _rmtree(tmp)
 
-    # -- helpers -------------------------------------------------------------
+    def _docker_cmd(self, code_path: Path, sid: str, env: Optional[dict]) -> list[str]:
+        network = "none" if not self.config.network_enabled else "bridge"
+        return [
+            "docker", "run", "--rm",
+            f"--name=nf-sandbox-{sid}",
+            f"--memory={self.config.max_memory_mb}m",
+            "--cpus=1.0",
+            f"--pids-limit={self.config.max_processes}",
+            f"--network={network}",
+            f"--read-only={str(self.config.read_only_root).lower()}",
+            "--tmpfs=/tmp:exec,size=256m",
+            "-v", f"{code_path.parent}:{self.config.work_dir}:ro",
+            "-w", self.config.work_dir,
+            *self._docker_env_args(env),
+            self.config.image,
+            "python", str(Path(self.config.work_dir) / code_path.name),
+        ]
+
+    def _build_safe_env(self, env: Optional[dict]) -> dict[str, str]:
+        safe = {k: v for k, v in os.environ.items() if k in SANDBOX_SAFE_ENV_VARS}
+        for key, value in (env or {}).items():
+            if key in SANDBOX_SAFE_ENV_VARS:
+                safe[key] = str(value)
+        safe["PYTHONDONTWRITEBYTECODE"] = "1"
+        safe["PYTHONUNBUFFERED"] = "1"
+        return safe
+
+    def _docker_env_args(self, env: Optional[dict]) -> list[str]:
+        args = []
+        merged: dict[str, str] = {}
+        for key, value in self.config.env_vars.items():
+            if key in SANDBOX_SAFE_ENV_VARS:
+                merged[key] = value
+        for key, value in (env or {}).items():
+            if key in SANDBOX_SAFE_ENV_VARS:
+                merged[key] = value
+        for key, value in merged.items():
+            args.extend(["-e", f"{key}={value}"])
+        return args
+
+    def _local_process_kwargs(self) -> dict[str, Any]:
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+            return {"creationflags": creationflags}
+        return {
+            "preexec_fn": self._posix_limit_resources,
+            "start_new_session": True,
+        }
+
+    def _local_command(self, code_path: Path) -> list[str]:
+        return [sys.executable, "-c", _LOCAL_NETWORK_GUARD, str(code_path)]
+
+    async def _terminate_process(self, proc: asyncio.subprocess.Process) -> None:
+        if proc.returncode is not None:
+            return
+        if sys.platform == "win32":
+            try:
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/PID", str(proc.pid), "/T", "/F",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await killer.communicate()
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except Exception:
+            pass
+
+    def _posix_limit_resources(self) -> None:
+        try:
+            import resource
+
+            memory_limit = self.config.max_memory_mb * 1024 * 1024
+            resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
+        except Exception:
+            pass
+        try:
+            import resource
+
+            cpu_limit = max(1, self.config.timeout_seconds)
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit + 1))
+        except Exception:
+            pass
+        try:
+            import resource
+
+            proc_limit = max(1, self.config.max_processes)
+            resource.setrlimit(resource.RLIMIT_NPROC, (proc_limit, proc_limit))
+        except Exception:
+            pass
 
     @staticmethod
     def _safe_decode(data: bytes) -> str:
@@ -250,25 +374,22 @@ class SandboxExecutor:
             return text[: self.config.max_output_bytes] + "\n... [OUTPUT TRUNCATED]", True
         return text, False
 
-    def _docker_env_args(self, env: Optional[dict]) -> list[str]:
-        args = []
-        merged = {**self.config.env_vars, **(env or {})}
-        for k, v in merged.items():
-            args.extend(["-e", f"{k}={v}"])
-        return args
-
-
-# ---------------------------------------------------------------------------
-# utilities
-# ---------------------------------------------------------------------------
 
 def _sandbox_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
 def _rmtree(path: str) -> None:
-    import shutil
     try:
         shutil.rmtree(path, ignore_errors=True)
     except Exception:
         pass
+
+
+__all__ = [
+    "ExecutionResult",
+    "SandboxConfig",
+    "SandboxExecutor",
+    "SandboxMode",
+    "SANDBOX_SAFE_ENV_VARS",
+]

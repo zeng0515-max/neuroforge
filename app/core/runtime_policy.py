@@ -187,7 +187,29 @@ class RuntimePolicy:
                 decision.policy,
                 decision.reason,
             )
+            self._persist_denial(decision)
         return decision
+
+    @staticmethod
+    def _persist_denial(decision: PolicyDecision) -> None:
+        """Mirror a denial into the durable audit log (best effort)."""
+        try:
+            from app.core.audit import ActorType, AuditEventType, audit_logger
+
+            audit_logger.log(
+                AuditEventType.POLICY_DENIED,
+                ActorType.SYSTEM,
+                decision.actor,
+                f"policy_denied:{decision.kind.value}",
+                input_data={
+                    "policy": decision.policy,
+                    "reason": decision.reason,
+                    "context": decision.context,
+                },
+                metadata={"source": "runtime_policy"},
+            )
+        except Exception:  # noqa: BLE001 - auditing must never break enforcement
+            logger.debug("Unable to persist policy denial to audit log", exc_info=True)
 
 
 runtime_policy = RuntimePolicy()

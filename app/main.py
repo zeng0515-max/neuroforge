@@ -30,11 +30,12 @@ from app.api.v1.execute import router as execute_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.misc import router as misc_router
 from app.api.v1.pipeline import router as pipeline_router
+from app.api.v1.policy import router as policy_router
 from app.api.v1.skills import router as skills_router
 from app.api.v1.slo import router as slo_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.websocket import router as ws_router
-from app.core.auth import verify_api_key
+from app.core.auth import is_production_env, verify_api_key
 from app.core.config import settings
 
 # ====================================================================== #
@@ -68,6 +69,28 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动时预热核心单例，初始化新旧双架构。"""
     from app.core.logging_config import setup_logging
     setup_logging(settings.app.log_level)
+
+    # 安装默认运行时策略规则（幂等）：kill switch / 敏感路径 / 破坏性命令 / 工具审批。
+    try:
+        from app.core.policy_rules import install_default_policy_rules
+
+        installed = install_default_policy_rules()
+        logger.info("运行时策略规则已就绪（本次新增 %d 条）", installed)
+    except Exception as e:
+        logger.error("运行时策略规则安装失败：%s", e)
+
+    # 恢复持久化的 kill switch 状态（放在策略规则之后、DB 之前）：失败只记日志，不阻断启动。
+    try:
+        from app.core.policy_state import load_state
+
+        kill_switch_enabled = load_state()
+        logger.info("运行时 kill switch 状态已恢复：enabled=%s", kill_switch_enabled)
+    except Exception as e:
+        logger.warning("运行时 kill switch 状态恢复失败（保持默认关闭）：%s", e)
+
+    # 生产环境必须配置 API_KEY；未配置直接拒绝启动，避免默认放行。
+    if is_production_env() and not settings.security.api_key:
+        raise RuntimeError("API_KEY must be configured when APP_ENV is production/prod")
 
     # 触发各单例初始化（即使部分失败也不阻断启动）
     try:
@@ -103,6 +126,8 @@ async def lifespan(app: FastAPI):
     try:
         from app.core.events import event_bus
         event_bus.clear()  # 确保干净状态
+        from app.api.v1.websocket import start_ws_event_bridge
+        start_ws_event_bridge(force=True)
         logger.info("EventBus 已就绪")
     except Exception as e:
         logger.error("EventBus 初始化失败：%s", e)
@@ -196,7 +221,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("关闭智能体池时出错：%s", e)
 
-    # 1. 取消仍在运行的后台任务，避免事件循环关闭时产生 warning
+    # 1. 取消 WebSocket 事件桥接 worker，避免 pending task 警告
+    try:
+        from app.api.v1.websocket import stop_ws_event_bridge
+        await stop_ws_event_bridge()
+    except Exception as e:
+        logger.warning("关闭 WebSocket 事件桥接时出错：%s", e)
+
+    # 2. 取消仍在运行的后台任务，避免事件循环关闭时产生 warning
     try:
         from app.api.v1.tasks import _background_tasks
         for task in list(_background_tasks):
@@ -213,10 +245,9 @@ async def lifespan(app: FastAPI):
 
     # 2. 关闭 checkpointer 的 sqlite 连接（断点续跑用独立连接）
     try:
-        from app.graph.pipeline import _checkpointer_conn
-        if _checkpointer_conn is not None:
-            _checkpointer_conn.close()
-            logger.info("Checkpointer 连接已关闭")
+        from app.graph.pipeline import close_checkpointer_connections
+        close_checkpointer_connections()
+        logger.info("Checkpointer 连接已关闭")
     except Exception as e:
         logger.warning("关闭 checkpointer 连接时出错：%s", e)
 
@@ -238,14 +269,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+def _resolve_cors_config():
+    cors_origins = settings.security.cors_origins
+    if isinstance(cors_origins, str):
+        cors_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    cors_allow_credentials = bool(cors_origins and "*" not in cors_origins)
+    return cors_origins or [], cors_allow_credentials
+
+
 # CORS
-cors_origins = settings.security.cors_origins
-if isinstance(cors_origins, str):
-    cors_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+cors_origins, cors_allow_credentials = _resolve_cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins or ["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins or [],
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -312,6 +349,7 @@ app.include_router(agents_router, dependencies=_auth_deps)
 app.include_router(jobs_router, dependencies=_auth_deps)
 app.include_router(pipeline_router, dependencies=_auth_deps)
 app.include_router(slo_router, dependencies=_auth_deps)
+app.include_router(policy_router, dependencies=_auth_deps)
 app.include_router(ws_router, prefix="/api/v1")
 
 # 挂载前端静态页面

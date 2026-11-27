@@ -63,32 +63,87 @@ logger = logging.getLogger(__name__)
 #  - langgraph-checkpoint-sqlite 未装时降级为 None（不持久化，但仍能跑）
 
 _CHECKPOINT_DB_PATH = Path("data/checkpoints.db")
-_checkpointer_singleton = None
-_checkpointer_conn = None
-# Bug S4 修复：单例创建加锁，避免并发首次调用产生多个 SqliteSaver / sqlite 连接
+_checkpointer_local = threading.local()
+_checkpointer_connections: List[sqlite3.Connection] = []
+# 每个执行线程持有独立 SqliteSaver/连接，避免单个 sqlite 连接跨线程共享。
 _checkpointer_lock = threading.Lock()
 
 
 def get_checkpointer():
-    """获取 SqliteSaver 单例。未安装则返回 None。"""
-    global _checkpointer_singleton, _checkpointer_conn
+    """获取当前线程专属 SqliteSaver；未安装则返回 None。"""
+    global _checkpointer_connections
     if not _SQLITE_SAVER_AVAILABLE:
         return None
-    # 双重检查：避免并发线程同时进入创建分支
-    if _checkpointer_singleton is not None:
-        return _checkpointer_singleton
+    cached = getattr(_checkpointer_local, "checkpointer", None)
+    if cached is not None:
+        return cached
     with _checkpointer_lock:
-        if _checkpointer_singleton is not None:  # 双重检查
-            return _checkpointer_singleton
+        cached = getattr(_checkpointer_local, "checkpointer", None)
+        if cached is not None:
+            return cached
         try:
             _CHECKPOINT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            _checkpointer_conn = sqlite3.connect(str(_CHECKPOINT_DB_PATH), check_same_thread=False)
-            _checkpointer_singleton = SqliteSaver(_checkpointer_conn)
+            conn = sqlite3.connect(str(_CHECKPOINT_DB_PATH), check_same_thread=False)
+            checkpointer = SqliteSaver(conn)
+            _checkpointer_local.conn = conn
+            _checkpointer_local.checkpointer = checkpointer
+            _checkpointer_connections.append(conn)
             logger.info("SqliteSaver 已初始化：%s", _CHECKPOINT_DB_PATH)
-            return _checkpointer_singleton
+            return checkpointer
         except Exception as e:
             logger.warning("SqliteSaver 初始化失败，断点续跑不可用：%s", e)
             return None
+
+
+def has_checkpoint(task_id: str) -> bool:
+    """Return True when a runnable checkpoint exists for task_id."""
+    if not (_LANGGRAPH_AVAILABLE and _SQLITE_SAVER_AVAILABLE):
+        return False
+    checkpointer = get_checkpointer()
+    if checkpointer is None:
+        return False
+    try:
+        return checkpointer.get_tuple({"configurable": {"thread_id": task_id}}) is not None
+    except Exception:
+        return False
+
+
+def _checkpoint_phase(checkpoint: Any) -> Optional[str]:
+    """Best-effort extraction of the latest persisted pipeline phase."""
+    channel_values = getattr(checkpoint, "channel_values", None)
+    if channel_values is None and isinstance(checkpoint, dict):
+        channel_values = checkpoint.get("channel_values", checkpoint)
+    if not channel_values:
+        return None
+    state = channel_values.get("state") if isinstance(channel_values, dict) else getattr(
+        channel_values, "state", None
+    )
+    if not state:
+        return None
+    status = state.get("status") if isinstance(state, dict) else getattr(state, "status", None)
+    if not status:
+        return None
+    phase = status.get("phase") if isinstance(status, dict) else getattr(status, "phase", None)
+    if phase is None:
+        return None
+    return phase.value if hasattr(phase, "value") else str(phase)
+
+
+def close_checkpointer_connections() -> None:
+    """Close every sqlite connection created for thread-local checkpointers."""
+    with _checkpointer_lock:
+        conns = list(_checkpointer_connections)
+        _checkpointer_connections.clear()
+        try:
+            _checkpointer_local.checkpointer = None
+            _checkpointer_local.conn = None
+        except Exception:
+            pass
+    for conn in conns:
+        try:
+            conn.close()
+        except Exception:
+            logger.warning("Failed to close a checkpointer sqlite connection", exc_info=True)
 
 
 # ====================================================================== #
@@ -793,6 +848,10 @@ def resume_pipeline(
         _pipeline_start = time.monotonic()
         app = build_graph(checkpointer=checkpointer)
         config = {"configurable": {"thread_id": task_id}}
+        latest = checkpointer.get_tuple(config)
+        if latest is not None and _checkpoint_phase(latest) == PipelinePhase.DONE.value:
+            logger.warning("任务 %s 的 checkpoint 已是 DONE，拒绝重复恢复", task_id)
+            return None
         # 用 None 作为输入，LangGraph 会从 checkpoint 恢复
         # 如果有 user_request，更新到 state（用于重新触发）
         result = app.invoke(None, config=config)
@@ -811,6 +870,9 @@ __all__ = [
     "stream_pipeline",
     "LinearPipeline",
     "get_checkpointer",
+    "has_checkpoint",
+    "close_checkpointer_connections",
+    "_checkpoint_phase",
     "_router_after_review",
     "retry_code_gen_node",
 ]

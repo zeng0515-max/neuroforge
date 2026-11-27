@@ -117,6 +117,7 @@ class ToolPermissionListResponse(BaseModel):
     """工具权限列表响应。"""
     tools: List[ToolPermissionInfo] = Field(default_factory=list)
     current_permission: str = "free"
+    default_permission: str = "observe"
 
 
 class ToolPermissionSetRequest(BaseModel):
@@ -145,12 +146,16 @@ async def list_tool_permissions() -> ToolPermissionListResponse:
     return ToolPermissionListResponse(
         tools=tools,
         current_permission=tool_registry.get_current_permission().value,
+        default_permission=tool_registry.get_default_permission().value,
     )
 
 
 @router.post("/tools/permissions", response_model=ToolPermissionSetResponse)
 async def set_tool_permissions(req: ToolPermissionSetRequest) -> ToolPermissionSetResponse:
-    """设置当前工具调用权限等级。"""
+    """设置进程级默认的工具调用权限等级。
+
+    只改默认值：请求内部用 ``permission_scope`` 临时提权，不会影响其他请求。
+    """
     level_map = {
         "free": ToolPermissionLevel.FREE,
         "observe": ToolPermissionLevel.OBSERVE,
@@ -160,7 +165,7 @@ async def set_tool_permissions(req: ToolPermissionSetRequest) -> ToolPermissionS
     level = level_map.get(req.level.lower())
     if level is None:
         raise HTTPException(400, f"无效的权限等级: {req.level}，可选: free / observe / modify / dangerous")
-    tool_registry.set_permission(level)
+    tool_registry.set_default_permission(level)
     return ToolPermissionSetResponse(
         status="ok",
         current_permission=level.value,

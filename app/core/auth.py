@@ -7,12 +7,26 @@
 """
 from __future__ import annotations
 
-from fastapi import Header, HTTPException, Request
+from fastapi import Header, HTTPException, Request, WebSocket, WebSocketException
 
 from app.core.config import settings
 
 # 健康检查路径白名单：不鉴权，便于负载均衡/容器探针访问
 _HEALTH_PATHS = {"/api/v1/health"}
+
+
+def is_production_env() -> bool:
+    """Return True when this process is running in a production environment."""
+    return settings.app.env.strip().lower() in {"production", "prod"}
+
+
+def _unauthorized_response() -> HTTPException:
+    if not settings.security.api_key:
+        return HTTPException(
+            status_code=503,
+            detail="API_KEY is not configured; refusing to accept requests",
+        )
+    return HTTPException(status_code=401, detail="invalid api key")
 
 
 async def verify_api_key(
@@ -29,11 +43,29 @@ async def verify_api_key(
     if request.url.path in _HEALTH_PATHS:
         return
     expected = settings.security.api_key
-    # 开发模式：未配置 API_KEY 时不强制鉴权
+    # Production must fail closed when API_KEY is missing.
     if not expected:
+        if is_production_env():
+            raise _unauthorized_response()
         return
     if x_api_key != expected:
         raise HTTPException(status_code=401, detail="invalid api key")
 
 
-__all__ = ["verify_api_key"]
+async def verify_api_key_ws(
+    websocket: WebSocket,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+) -> None:
+    """WebSocket 版本鉴权依赖，与 REST 依赖保持同一套配置和拒绝策略。"""
+    if websocket.url.path in _HEALTH_PATHS:
+        return
+    expected = settings.security.api_key
+    if not expected:
+        if is_production_env():
+            raise WebSocketException(code=1008, reason="API_KEY is not configured")
+        return
+    if x_api_key != expected:
+        raise WebSocketException(code=1008, reason="invalid api key")
+
+
+__all__ = ["verify_api_key", "verify_api_key_ws", "is_production_env"]

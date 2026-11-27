@@ -10,13 +10,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue
+import threading
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from app.core.events import event_bus, EventType, Event
 from app.core.config import settings
+from app.core.auth import verify_api_key_ws
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -75,6 +78,12 @@ class ConnectionManager:
 
 ws_manager = ConnectionManager()
 
+_bridge_loop: Optional[asyncio.AbstractEventLoop] = None
+_bridge_task: Optional[asyncio.Task] = None
+_bridge_lock = threading.Lock()
+_pending_payloads: queue.Queue[dict] = queue.Queue()
+_bridge_registered = False
+
 # ---------------------------------------------------------------------------
 # Event bridge — pipe pipeline events to WebSocket rooms
 # ---------------------------------------------------------------------------
@@ -105,19 +114,85 @@ def _on_event(event: Event) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "data": event.data,
     }
-    asyncio.ensure_future(ws_manager.broadcast(tid, payload))
+    _schedule_bridge_payload(payload)
 
 
 # Register bridge (idempotent — subscribe to all event types)
-for _et in EventType:
-    event_bus.subscribe(_et, _on_event)
+def _schedule_bridge_payload(payload: dict) -> None:
+    loop = _bridge_loop
+    if loop is not None and not loop.is_closed():
+        try:
+            asyncio.run_coroutine_threadsafe(
+                ws_manager.broadcast(payload.get("task_id", ""), payload),
+                loop,
+            )
+            return
+        except RuntimeError:
+            pass
+    _pending_payloads.put(payload)
+
+
+def _subscribe_bridge() -> None:
+    global _bridge_registered
+    for _et in EventType:
+        event_bus.subscribe(_et, _on_event)
+    _bridge_registered = True
+
+
+def _ensure_bridge(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    global _bridge_loop, _bridge_task, _bridge_registered
+    loop = loop or asyncio.get_running_loop()
+    with _bridge_lock:
+        if _bridge_loop is None or _bridge_loop.is_closed():
+            _bridge_loop = loop
+            _bridge_task = loop.create_task(_bridge_worker())
+    if not _bridge_registered:
+        _subscribe_bridge()
+
+
+def start_ws_event_bridge(*, force: bool = False) -> None:
+    global _bridge_registered
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        return
+    _ensure_bridge(loop)
+    if force:
+        _subscribe_bridge()
+
+
+async def stop_ws_event_bridge() -> None:
+    global _bridge_loop, _bridge_task
+    task = _bridge_task
+    with _bridge_lock:
+        _bridge_loop = None
+        _bridge_task = None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _bridge_worker() -> None:
+    while True:
+        try:
+            while True:
+                payload = _pending_payloads.get_nowait()
+                await ws_manager.broadcast(payload.get("task_id", ""), payload)
+        except queue.Empty:
+            pass
+        await asyncio.sleep(0.05)
 
 # ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
 
-@router.websocket("/ws/pipeline/{task_id}")
+@router.websocket("/ws/pipeline/{task_id}", dependencies=[Depends(verify_api_key_ws)])
 async def pipeline_websocket(ws: WebSocket, task_id: str):
     """Stream pipeline execution events for a specific task.
 
@@ -131,6 +206,7 @@ async def pipeline_websocket(ws: WebSocket, task_id: str):
       {"type":"subscribe"}
       {"type":"pong"}
     """
+    _ensure_bridge(asyncio.get_running_loop())
     await ws.accept()
     await ws_manager.join(task_id, ws)
 
